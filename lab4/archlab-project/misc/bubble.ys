@@ -16,7 +16,6 @@
  # You may want to modify this portion
 
 
-
  bubble_a:
  	pushq	%rbp
  	rrmovq	%rsp, %rbp
@@ -24,10 +23,6 @@
  	rmmovq	%rsi, -48(%rbp)		# n
  	mrmovq	-48(%rbp), %rax		# n
  	addq %rax, %rax				# rax *= 8
- 	addq %rax, %rax
- 	addq %rax, %rax
- 	addq %rax, %rax
- 	addq %rax, %rax
  	addq %rax, %rax
  	addq %rax, %rax
  	# <==
@@ -84,8 +79,8 @@
  	# cmpq	-16(%rbp), %rax		# compare i and end
  	mrmovq -16(%rbp), %r8
  	rrmovq %rax, %r9
- 	subq %r8, %r9
- 	jl	L12
+ 	xorq %r8, %r9
+ 	jne	L12
  	# subq	$8, -16(%rbp)		# end -= 8
  	irmovq $8, %r8
  	mrmovq -16(%rbp), %r9
@@ -97,12 +92,9 @@
  	# cmpq	%rax, -40(%rbp)		# compare end and a
 	rrmovq %rax, %r8
  	mrmovq -40(%rbp), %r9
- 	subq %r8, %r9
- 	# ==>
- 	jl	L13
+ 	xorq %r8, %r9
+ 	jne	L13
  	popq	%rbp
-	nop
-	nop
  	ret
 
  main:
@@ -111,6 +103,6 @@
  	call bubble_a
  	ret
 
- 	.pos 0x600
+ 	.pos 0x800
  stack:
 
