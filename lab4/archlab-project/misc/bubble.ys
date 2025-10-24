@@ -1,0 +1,114 @@
+ 	.pos 0
+ 	irmovq	stack,%rsp
+ 	call main
+ 	halt
+
+ 	.align 8
+ array:
+ 	.quad 0xbca
+ 	.quad 0xcba
+ 	.quad 0xacb
+ 	.quad 0xcab
+ 	.quad 0xabc
+ 	.quad 0xbac
+
+ ################################################################################
+ # You may want to modify this portion
+
+
+
+ bubble_a:
+ 	pushq	%rbp
+ 	rrmovq	%rsp, %rbp
+ 	rmmovq	%rdi, -40(%rbp)		# a[]
+ 	rmmovq	%rsi, -48(%rbp)		# n
+ 	mrmovq	-48(%rbp), %rax		# n
+ 	addq %rax, %rax				# rax *= 8
+ 	addq %rax, %rax
+ 	addq %rax, %rax
+ 	addq %rax, %rax
+ 	addq %rax, %rax
+ 	addq %rax, %rax
+ 	addq %rax, %rax
+ 	# <==
+ 	# leaq	-8(%rax), %rdx		# rdx = 8*(n-1)
+ 	rrmovq %rax, %rdx
+ 	irmovq $8, %r8
+ 	subq %r8, %rdx
+ 	# ==>
+ 	mrmovq	-40(%rbp), %rax
+ 	addq	%rdx, %rax			# end = a + 8*(n-1)
+ 	rmmovq	%rax, -16(%rbp)		# store end in stack
+ 	jmp	L9
+ L13:
+ 	mrmovq	-40(%rbp), %rax		# rax = a
+ 	rmmovq	%rax, -24(%rbp)		# i = a
+ 	jmp	L10
+ L12:
+ 	mrmovq	-24(%rbp), %rax
+ 	# addq	$8, %rax
+ 	irmovq $8, %r8
+ 	addq %r8, %rax
+ 	mrmovq	(%rax), %rdx
+ 	mrmovq	-24(%rbp), %rax
+ 	mrmovq	(%rax), %rax
+ 	# cmpq	%rax, %rdx
+ 	rrmovq %rdx, %r8
+ 	rrmovq %rax, %r9
+ 	subq %r9, %r8
+ 	jge	L11
+ 	mrmovq	-24(%rbp), %rax
+ 	mrmovq	8(%rax), %rax
+ 	rmmovq	%rax, -8(%rbp)
+ 	mrmovq	-24(%rbp), %rax
+ 	# leaq	8(%rax), %rdx
+ 	irmovq $8, %r8
+ 	rrmovq %rax, %rdx
+ 	addq %r8, %rdx
+
+ 	mrmovq	-24(%rbp), %rax
+ 	mrmovq	(%rax), %rax
+ 	rmmovq	%rax, (%rdx)
+ 	mrmovq	-24(%rbp), %rax
+ 	mrmovq	-8(%rbp), %rdx
+ 	rmmovq	%rdx, (%rax)
+ L11:
+ 	# addq	$8, -24(%rbp)		# i += 8
+ 	irmovq $8, %r8
+ 	mrmovq -24(%rbp), %r9
+ 	addq %r8, %r9
+ 	rmmovq %r9, -24(%rbp)
+ L10:
+ 	mrmovq	-24(%rbp), %rax		# rax = i
+ 	# cmpq	-16(%rbp), %rax		# compare i and end
+ 	mrmovq -16(%rbp), %r8
+ 	rrmovq %rax, %r9
+ 	subq %r8, %r9
+ 	jl	L12
+ 	# subq	$8, -16(%rbp)		# end -= 8
+ 	irmovq $8, %r8
+ 	mrmovq -16(%rbp), %r9
+ 	subq %r8, %r9
+ 	rmmovq %r9, -16(%rbp)
+ L9:
+ 	mrmovq	-16(%rbp), %rax 	# rax = end
+ 	# <==
+ 	# cmpq	%rax, -40(%rbp)		# compare end and a
+ 	mrmovq -40(%rbp), %r9
+ 	rrmovq %rax, %r8
+ 	subq %r8, %r9
+ 	# ==>
+ 	jl	L13
+ 	nop
+ 	nop
+ 	popq	%rbp
+ 	ret
+
+ main:
+ 	irmovq array, %rdi
+ 	call bubble_a
+ 	ret
+
+ 	.pos 0x200
+ stack:
+

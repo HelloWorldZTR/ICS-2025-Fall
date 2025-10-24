@@ -1,0 +1,47 @@
+# 张庭瑞 2400017786
+# As you've got familiar with Y86 after writting your first y86 code
+# (bubble.ys), this code is left blank for you :)
+
+
+    .pos 0
+    irmovq stack, %rsp
+    call main
+    halt
+
+# Sample linked list
+.align 8
+ele1:
+    .quad 0x00d
+    .quad ele2
+ele2:
+    .quad 0x0e0
+    .quad ele3
+ele3:
+    .quad 0xf00
+    .quad 0
+
+main:
+    irmovq ele1, %rdi
+    call sum
+    ret
+
+# arguments:
+# %rdi: array pointer a[]
+sum:
+    andq %rdi, %rdi
+    jne non_terminal
+    xorq %rax, %rax         # return 0
+    ret
+non_terminal:
+    pushq %rbx
+    mrmovq (%rdi), %rbx     # rbx = p->value
+    mrmovq 8(%rdi), %rdi    # sum(p->next)
+    call sum
+    addq %rbx, %rax         # return rbx + rax
+    popq %rbx
+    ret
+
+
+.pos 0x200
+stack:
+    # ??

@@ -1,0 +1,115 @@
+0x0000:                      | 	.pos 0
+0x0000: 30f40002000000000000 | 	irmovq	stack,%rsp
+0x000a: 80fe01000000000000   | 	call main
+0x0013: 00                   | 	halt
+                             | 
+0x0018:                      | 	.align 8
+0x0018:                      | array:
+0x0018: ca0b000000000000     | 	.quad 0xbca
+0x0020: ba0c000000000000     | 	.quad 0xcba
+0x0028: cb0a000000000000     | 	.quad 0xacb
+0x0030: ab0c000000000000     | 	.quad 0xcab
+0x0038: bc0a000000000000     | 	.quad 0xabc
+0x0040: ac0b000000000000     | 	.quad 0xbac
+                             | 	
+                             | ################################################################################
+                             | # You may want to modify this portion
+                             | 
+                             | 
+                             | 
+0x0048:                      | bubble_a:
+0x0048: a05f                 | 	pushq	%rbp
+0x004a: 2045                 | 	rrmovq	%rsp, %rbp
+0x004c: 4075d8ffffffffffffff | 	rmmovq	%rdi, -40(%rbp)		# a[]
+0x0056: 4065d0ffffffffffffff | 	rmmovq	%rsi, -48(%rbp)		# n
+0x0060: 5005d0ffffffffffffff | 	mrmovq	-48(%rbp), %rax		# n
+0x006a: 6000                 | 	addq %rax, %rax				# rax *= 8
+0x006c: 6000                 | 	addq %rax, %rax
+0x006e: 6000                 | 	addq %rax, %rax
+0x0070: 6000                 | 	addq %rax, %rax
+0x0072: 6000                 | 	addq %rax, %rax
+0x0074: 6000                 | 	addq %rax, %rax
+0x0076: 6000                 | 	addq %rax, %rax
+                             | 	# <==
+                             | 	# leaq	-8(%rax), %rdx		# rdx = 8*(n-1)
+0x0078: 2002                 | 	rrmovq %rax, %rdx
+0x007a: 30f80800000000000000 | 	irmovq $8, %r8
+0x0084: 6182                 | 	subq %r8, %rdx
+                             | 	# ==>
+0x0086: 5005d8ffffffffffffff | 	mrmovq	-40(%rbp), %rax
+0x0090: 6020                 | 	addq	%rdx, %rax			# end = a + 8*(n-1)
+0x0092: 4005f0ffffffffffffff | 	rmmovq	%rax, -16(%rbp)		# store end in stack
+0x009c: 70d801000000000000   | 	jmp	L9
+0x00a5:                      | L13:
+0x00a5: 5005d8ffffffffffffff | 	mrmovq	-40(%rbp), %rax		# rax = a
+0x00af: 4005e8ffffffffffffff | 	rmmovq	%rax, -24(%rbp)		# i = a
+0x00b9: 709701000000000000   | 	jmp	L10
+0x00c2:                      | L12:
+0x00c2: 5005e8ffffffffffffff | 	mrmovq	-24(%rbp), %rax
+                             | 	# addq	$8, %rax
+0x00cc: 30f80800000000000000 | 	irmovq $8, %r8
+0x00d6: 6080                 | 	addq %r8, %rax
+0x00d8: 50200000000000000000 | 	mrmovq	(%rax), %rdx
+0x00e2: 5005e8ffffffffffffff | 	mrmovq	-24(%rbp), %rax
+0x00ec: 50000000000000000000 | 	mrmovq	(%rax), %rax
+                             | 	# cmpq	%rax, %rdx
+0x00f6: 2028                 | 	rrmovq %rdx, %r8
+0x00f8: 2009                 | 	rrmovq %rax, %r9
+0x00fa: 6198                 | 	subq %r9, %r8
+0x00fc: 757701000000000000   | 	jge	L11
+0x0105: 5005e8ffffffffffffff | 	mrmovq	-24(%rbp), %rax
+0x010f: 50000800000000000000 | 	mrmovq	8(%rax), %rax
+0x0119: 4005f8ffffffffffffff | 	rmmovq	%rax, -8(%rbp)
+0x0123: 5005e8ffffffffffffff | 	mrmovq	-24(%rbp), %rax
+                             | 	# leaq	8(%rax), %rdx
+0x012d: 30f80800000000000000 | 	irmovq $8, %r8
+0x0137: 2002                 | 	rrmovq %rax, %rdx
+0x0139: 6082                 | 	addq %r8, %rdx
+                             | 
+0x013b: 5005e8ffffffffffffff | 	mrmovq	-24(%rbp), %rax
+0x0145: 50000000000000000000 | 	mrmovq	(%rax), %rax
+0x014f: 40020000000000000000 | 	rmmovq	%rax, (%rdx)
+0x0159: 5005e8ffffffffffffff | 	mrmovq	-24(%rbp), %rax
+0x0163: 5025f8ffffffffffffff | 	mrmovq	-8(%rbp), %rdx
+0x016d: 40200000000000000000 | 	rmmovq	%rdx, (%rax)
+0x0177:                      | L11:
+                             | 	# addq	$8, -24(%rbp)		# i += 8
+0x0177: 30f80800000000000000 | 	irmovq $8, %r8
+0x0181: 5095e8ffffffffffffff | 	mrmovq -24(%rbp), %r9
+0x018b: 6089                 | 	addq %r8, %r9
+0x018d: 4095e8ffffffffffffff | 	rmmovq %r9, -24(%rbp)
+0x0197:                      | L10:
+0x0197: 5005e8ffffffffffffff | 	mrmovq	-24(%rbp), %rax		# rax = i
+                             | 	# cmpq	-16(%rbp), %rax		# compare i and end
+0x01a1: 5085f0ffffffffffffff | 	mrmovq -16(%rbp), %r8
+0x01ab: 2009                 | 	rrmovq %rax, %r9
+0x01ad: 6189                 | 	subq %r8, %r9
+0x01af: 72c200000000000000   | 	jl	L12
+                             | 	# subq	$8, -16(%rbp)		# end -= 8
+0x01b8: 30f80800000000000000 | 	irmovq $8, %r8
+0x01c2: 5095f0ffffffffffffff | 	mrmovq -16(%rbp), %r9
+0x01cc: 6189                 | 	subq %r8, %r9
+0x01ce: 4095f0ffffffffffffff | 	rmmovq %r9, -16(%rbp)
+0x01d8:                      | L9:
+0x01d8: 5005f0ffffffffffffff | 	mrmovq	-16(%rbp), %rax 	# rax = end
+                             | 	# <==
+                             | 	# cmpq	%rax, -40(%rbp)		# compare end and a
+0x01e2: 5095d8ffffffffffffff | 	mrmovq -40(%rbp), %r9
+0x01ec: 2008                 | 	rrmovq %rax, %r8
+0x01ee: 6189                 | 	subq %r8, %r9
+                             | 	# ==>
+0x01f0: 72a500000000000000   | 	jl	L13
+0x01f9: 10                   | 	nop
+0x01fa: 10                   | 	nop
+0x01fb: b05f                 | 	popq	%rbp
+0x01fd: 90                   | 	ret
+                             | 
+0x01fe:                      | main:
+0x01fe: 30f71800000000000000 | 	irmovq array, %rdi
+0x0208: 804800000000000000   | 	call bubble_a
+0x0211: 90                   | 	ret
+                             | 
+0x0200:                      | 	.pos 0x200
+0x0200:                      | stack:
+                             | 
+                             | 
