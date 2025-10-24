@@ -49,6 +49,7 @@
  	# addq	$8, %rax
  	irmovq $8, %r8
  	addq %r8, %rax
+
  	mrmovq	(%rax), %rdx
  	mrmovq	-24(%rbp), %rax
  	mrmovq	(%rax), %rax
@@ -94,21 +95,22 @@
  	mrmovq	-16(%rbp), %rax 	# rax = end
  	# <==
  	# cmpq	%rax, -40(%rbp)		# compare end and a
+	rrmovq %rax, %r8
  	mrmovq -40(%rbp), %r9
- 	rrmovq %rax, %r8
  	subq %r8, %r9
  	# ==>
  	jl	L13
- 	nop
- 	nop
  	popq	%rbp
+	nop
+	nop
  	ret
 
  main:
  	irmovq array, %rdi
+	irmovq $6, %rsi
  	call bubble_a
  	ret
 
- 	.pos 0x200
+ 	.pos 0x600
  stack:
 
