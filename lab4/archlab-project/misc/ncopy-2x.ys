@@ -1,0 +1,64 @@
+################################################################################
+# ncopy.ys - Copy a src block of len words to dst.
+# Return the number of positive words (>0) contained in src.
+# - use iopq to save one instruction
+# - remove jmp when val<=0; instead, use mask to count positive
+#
+################################################################################
+# Do not modify this portion
+# Function prologue.
+# %rdi = src, %rsi = dst, %rdx = len
+ncopy:
+################################################################################
+# You can modify this portion
+	xorq %rax, %rax        # count = 0
+	andq %rdx, %rdx        # len <= 0 ?
+	jle Done               # if so, goto Done
+	# continue to do the 2 elements test
+
+Loop:
+	# check if at least two elements remain
+	isubq $1, %rdx         # len - 1
+	jle Tail                # less than 2
+
+
+
+	mrmovq 0(%rdi), %r10   	# val0 = src[0]
+	rrmovq %rax, %r11      	# r11 = count
+	iaddq $1, %r11         	# r11 = count + 1
+
+	iaddq $1, %rdx			# restore the len (also as a spacer)
+
+	andq %r10, %r10        	# val0 <= 0 ?
+	cmovg %r11, %rax       	# if (val0 > 0) count++
+	rmmovq %r10, 0(%rsi)   	# dst[0] = val0
+
+
+	mrmovq 8(%rdi), %r12   	# val1 = src[1]
+	rrmovq %rax, %r13      	# r13 = count
+	iaddq $1, %r13         	# r13 = count + 1
+
+	iaddq $16, %rdi        	# src += 2(also as a spacer)
+
+	andq %r12, %r12        	# val1 <= 0 ?
+	cmovg %r13, %rax       	# if (val1 > 0) count++
+	rmmovq %r12, 8(%rsi)  	# dst[1] = val1
+
+	# advance pointers
+	iaddq $16, %rsi        	# dst += 2
+	isubq $2, %rdx        	# len -= 2
+	jg Loop               	# if more left, loop again
+
+	jmp Done
+
+Tail:
+	# handle remaining single element (if len == 1)
+	mrmovq (%rdi), %r10
+	rrmovq %rax, %r11
+	iaddq $1, %r11
+	andq %r10, %r10
+	cmovg %r11, %rax
+	rmmovq %r10, (%rsi)
+
+Done:
+	ret

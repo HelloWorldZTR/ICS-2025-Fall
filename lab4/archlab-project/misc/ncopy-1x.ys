@@ -1,0 +1,39 @@
+################################################################################
+# ncopy.ys - Copy a src block of len words to dst.
+# Return the number of positive words (>0) contained in src.
+# - use iopq to save one instruction
+# - remove jmp when val<=0; instead, use mask to count positive
+#
+################################################################################
+# Do not modify this portion
+# Function prologue.
+# %rdi = src, %rsi = dst, %rdx = len
+ncopy:
+################################################################################
+# You can modify this portion
+	# Loop header
+	xorq %rax,%rax		# count = 0;
+	andq %rdx,%rdx		# len <= 0?
+	jle Done		# if so, goto Done:
+
+Loop:	
+	mrmovq (%rdi), %r10	# read val from src...
+	# put these not dependent things first
+	rrmovq %rax, %r11	# copy count to r11
+	iaddq $1, %r11		# r11 = count + 1
+	iaddq $8, %rdi		# src++
+	# now handle val dependent things
+	andq %r10, %r10		# val <= 0?
+	rmmovq %r10, (%rsi)	# ...and store it to dst delay this to prevent use after load, fine because already loaded
+	cmovg %r11, %rax	# count++
+	
+	iaddq $8, %rsi		# dst++
+
+	isubq $1, %rdx		# len--
+	jne Loop			# if so, goto Loop:
+Done:
+	ret
+
+# In grader, we will add a "trap: jmp trap" here, which traps your program in an
+# infinite loop. Thus your function should always return instead of falling
+# through till the end of the source code :)

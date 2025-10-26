@@ -1,0 +1,22 @@
+# 张庭瑞 2400017786
+# As you've got familiar with Y86 after writting your first y86 code
+# (bubble.ys), this code is left blank for you :)
+
+    .pos 0
+    irmovq stack, %rsp
+    call main
+    halt
+
+
+main:
+    xorq %rax,%rax    # sum = 0
+    iaddq $1, %rax
+    iaddq $2, %rbx
+    iaddq $3, %rcx
+    iaddq $4, %rdx
+    ret
+
+
+.pos 0x200
+stack:
+    # ??
