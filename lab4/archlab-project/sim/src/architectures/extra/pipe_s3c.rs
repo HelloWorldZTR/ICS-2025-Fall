@@ -56,10 +56,10 @@ u64 f_pc = [
     // valC is from Fetch Stage, thus the last cycle
     D.icode == CALL : D.valC;
     // Branch misprediction.  Use incremental PC
-    U8_PLACEHOLDER == JX && !e_cnd : U64_PLACEHOLDER;
+    E.icode == JX && !e_cnd : E.valP;
     // Completion of RET instruction.  Use value from stack
     // valM is from DEMW stage, thus the current cycle
-    U8_PLACEHOLDER == RET : e_valM;
+    E.icode == RET : e_valM;
     // Default: Use predicted PC
     1 : F.pred_pc;
 ];
@@ -170,13 +170,13 @@ u8 d_srcB = [
 });
 
 u64 d_valA = [
-    d_srcA == U8_PLACEHOLDER : e_valE;
-    d_srcA == U8_PLACEHOLDER : e_valM;
+    d_srcA == e_dstE : e_valE;
+    d_srcA == e_dstM : e_valM;
     1: reg_read.valA;
 ];
 u64 d_valB = [
-    BOOL_PLACEHOLDER : U64_PLACEHOLDER;
-    BOOL_PLACEHOLDER : U64_PLACEHOLDER;
+    d_srcB == e_dstE : e_valE;
+    d_srcB == e_dstM : e_valM;
     1: reg_read.valB;
 ];
 
@@ -263,11 +263,12 @@ ConditionCode cc = reg_cc.cc;
 bool e_cnd = cond.cnd;
 
 u8 e_dstE = [
-    U8_PLACEHOLDER == CMOVX && !BOOL_PLACEHOLDER : RNONE;
+    E.icode == CMOVX && !e_cnd : RNONE;
     1 : E.dstE;
 ];
 u8 e_dstM = E.dstM;
 
+u64 e_valP = E.valP;
 
 :========================: "Execute Stage (Memory)" :==========================:
 
@@ -323,7 +324,7 @@ bool prog_term = e_stat in { Hlt, Adr, Ins };
 // If a branch misprediction is detected during the Execute stage, it means that
 // the instruction currently in the Decode stage is invalid. Therefore, the next
 // cycle’s Execute stage needs to insert a bubble.
-bool branch_mispred = BOOL_PLACEHOLDER;
+bool branch_mispred = (E.icode == JX && !e_cnd) || E.icode == RET;
 
 // If the current instruction in the Decode stage is a RET, then the instruction
 // in the current Fetch stage is invalid. Therefore, the next cycle’s Fetch stage 
@@ -333,7 +334,7 @@ bool ret_harzard = D.icode == RET;
 // If both a branch misprediction and a RET hazard occur at the same time, since 
 // the jump instruction is executed before the RET, the RET should not have been 
 // executed, so a stall is not needed.
-bool f_stall = BOOL_PLACEHOLDER && !BOOL_PLACEHOLDER;
+bool f_stall = ret_harzard && !branch_mispred;
 
 @set_stage(f, {
     stall: f_stall,
@@ -345,7 +346,7 @@ bool d_stall = false;
 // If both a branch misprediction and a ret hazard occur at the same time,
 // since the jump instruction is executed before the RET, the RET should not
 // have been executed. Therefore, a bubble is not needed.
-bool d_bubble = BOOL_PLACEHOLDER && !BOOL_PLACEHOLDER;
+bool d_bubble = ret_harzard && !branch_mispred;
 
 @set_stage(d, {
     stall: d_stall,
