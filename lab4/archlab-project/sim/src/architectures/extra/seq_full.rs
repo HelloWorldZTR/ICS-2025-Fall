@@ -1,3 +1,4 @@
+// @author 张庭瑞 2400017786
 // This macro defines all pipeline registers in this architecture.
 // In SEQ architecture, all stages are executed in a single cycle. Thus
 // principally no pipeline registers are needed, with the exception of the

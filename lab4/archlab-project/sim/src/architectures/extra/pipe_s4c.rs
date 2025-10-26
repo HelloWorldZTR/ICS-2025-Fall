@@ -1,3 +1,4 @@
+// @author 张庭瑞 2400017786
 //! Analogous to `pipe_std`, we feed D.valP into d_valA in the Decode stage
 //! to elimiate valP in execute and memory stage pipeline registers.
 //!

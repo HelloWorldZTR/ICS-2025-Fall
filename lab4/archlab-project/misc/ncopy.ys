@@ -1,9 +1,11 @@
 ################################################################################
 # ncopy.ys - Copy a src block of len words to dst.
 # Return the number of positive words (>0) contained in src.
+# 张庭瑞 2400017786
+# - use unroll by 7
 # - use iopq to save one instruction
-# - remove jmp when val<=0; instead, use mask to count positive
-#
+# - use condigtional move to reduce penalty
+# - use custom prediction to reduce misprediction penalty
 ################################################################################
 # Do not modify this portion
 # Function prologue.
@@ -11,72 +13,120 @@
 ncopy:
 ################################################################################
 # You can modify this portion
-	xorq %rax, %rax        # count = 0
+	# xorq %rax, %rax        # count = 0
     # andq %rdx, %rdx
     # jle Done
 
 Loop:
-    # if less than 4 remain, jump to tail
-    rrmovq %rdx, %r9
-    isubq $4, %r9
+    # if less than 6 remain, jump to tail
+    rrmovq %rdx, %r14
+    isubq $6, %r14
     jl Tail
 
     # load (no use after load hazard)
-    mrmovq 0(%rdi), %r10
-    mrmovq 8(%rdi), %r11
-    mrmovq 16(%rdi), %r12
-    mrmovq 24(%rdi), %r13
+    mrmovq 0(%rdi), %r8
+    mrmovq 8(%rdi), %r9
+    mrmovq 16(%rdi), %r10
+    mrmovq 24(%rdi), %r11
+    mrmovq 32(%rdi), %r12
+    mrmovq 40(%rdi), %r13
+    # mrmovq 48(%rdi), %r14
 
     # store 
-    rmmovq %r10, 0(%rsi)
-    rmmovq %r11, 8(%rsi)
-    rmmovq %r12, 16(%rsi)
-    rmmovq %r13, 24(%rsi)
+    rmmovq %r8, 0(%rsi)
+    rmmovq %r9, 8(%rsi)
+    rmmovq %r10, 16(%rsi)
+    rmmovq %r11, 24(%rsi)
+    rmmovq %r12, 32(%rsi)
+    rmmovq %r13, 40(%rsi)
+    # rmmovq %r14, 48(%rsi)
 
     # update count
-    rrmovq %rax, %r14
-    iaddq $1, %r14
+    rrmovq %rax, %rcx
+    iaddq $1, %rcx
+    andq %r8, %r8
+    cmovg %rcx, %rax
+
+    rrmovq %rax, %rcx
+    iaddq $1, %rcx
+    andq %r9, %r9
+    cmovg %rcx, %rax
+
+    rrmovq %rax, %rcx
+    iaddq $1, %rcx
     andq %r10, %r10
-    cmovg %r14, %rax
+    cmovg %rcx, %rax
 
-    rrmovq %rax, %r14
-    iaddq $1, %r14
+    rrmovq %rax, %rcx
+    iaddq $1, %rcx
     andq %r11, %r11
-    cmovg %r14, %rax
+    cmovg %rcx, %rax
 
-    rrmovq %rax, %r14
-    iaddq $1, %r14
+    rrmovq %rax, %rcx
+    iaddq $1, %rcx
     andq %r12, %r12
-    cmovg %r14, %rax
+    cmovg %rcx, %rax
 
-    rrmovq %rax, %r14
-    iaddq $1, %r14
+    rrmovq %rax, %rcx
+    iaddq $1, %rcx
     andq %r13, %r13
-    cmovg %r14, %rax
+    cmovg %rcx, %rax
 
-    iaddq $32, %rdi
-    iaddq $32, %rsi
-    isubq $4, %rdx
+    # rrmovq %rax, %rcx
+    # iaddq $1, %rcx
+    # andq %r14, %r14
+    # cmovg %rcx, %rax
+
+    iaddq $48, %rdi
+    iaddq $48, %rsi
+    isubq $6, %rdx
     jne Loop
 
 Tail:
     # handle left elements
-    andq %rdx, %rdx
-    jle Done
+    rrmovq %rdx, %r14
+    isubq $2, %r14
+    jl TailTail
 
-TLoop:
     mrmovq (%rdi), %r10
-    rrmovq %rax, %r11
-    iaddq $1, %r11
-    iaddq $8, %rdi
+    mrmovq 8(%rdi), %r11
+
+    rrmovq %rax, %r12
+    iaddq $1, %r12
+
     rmmovq %r10, (%rsi)
+    rmmovq %r11, 8(%rsi)
     
     andq %r10, %r10
-    cmovg %r11, %rax
+    cmovg %r12, %rax
+
+    rrmovq %rax, %r12
+    iaddq $1, %r12
+    andq %r11, %r11
+    cmovg %r12, %rax
     
+    iaddq $16, %rsi
+    iaddq $16, %rdi
+    isubq $2, %rdx
+    jne Tail
+
+TailTail:
+    andq %rdx, %rdx
+    je Done
+    # handle remaining single element (if len == 1)
+    mrmovq (%rdi), %r10
+
+    rrmovq %rax, %r11
+    iaddq $1, %r11
+
+    andq %r10, %r10
+    cmovg %r11, %rax
+
+    rmmovq %r10, (%rsi)
+
     iaddq $8, %rsi
+    iaddq $8, %rdi
     isubq $1, %rdx
-    jne TLoop
 
 Done:
     ret

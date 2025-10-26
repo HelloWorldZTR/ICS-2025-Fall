@@ -1,3 +1,4 @@
+// @author 张庭瑞 2400017786
 //! We found that the critical path length of `pipe_s2` is 7, and the dependency
 //! path for calculating `f_pc` is too long. To reduce the dependency path length
 //! of `f_pc`, we further split the pipeline stages, separating the Decode Stage
