@@ -35,3 +35,11 @@
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+# Temporary files #
+###################
+trace.f*
+*.bc
+*.tmp
+.csim_results
+.marker
