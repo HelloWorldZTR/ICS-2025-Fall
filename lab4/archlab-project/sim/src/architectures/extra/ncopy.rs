@@ -1,103 +1,112 @@
-// @author 张庭瑞 2400017786
-//! Copy of pipe s4c
-
-
-// A pipeline register stores necessary information to process the instruction
-// at a specific stage.
+// This macro defines all pipeline registers in this architecture.
 crate::define_stages! {
     FetchStage f {
         pred_pc: u64 = 0
     }
     DecodeStage d {
-        stat: Stat = Stat::Aok, icode: u8 = NOP, ifun: u8 = 0,
+        stat: Stat = Bub, icode: u8 = NOP, ifun: u8 = 0,
         rA: u8 = RNONE, rB: u8 = RNONE,
         valC: u64 = 0, valP: u64 = 0
     }
     ExecuteStage e {
-        stat: Stat = Stat::Aok, icode: u8 = NOP, ifun: u8 = 0,
+        stat: Stat = Bub, icode: u8 = NOP, ifun: u8 = 0,
         valC: u64 = 0,
-        // since reg_file is used in the Decode stage, we need to store the
-        // values in the Execute stage for the next cycle.
         valA: u64 = 0, valB: u64 = 0,
-        // since reg_file is used in the Execute stage, we need to store the
-        // values in the Execute stage for the next cycle.
-        dstE: u8 = RNONE, dstM: u8 = RNONE
+        dstE: u8 = RNONE, dstM: u8 = RNONE,
+        srcA: u8 = RNONE, srcB: u8 = RNONE
     }
-    // Although this pipeline register is named as "MemoryStage", it is actually
-    // used in all of the rest stages.
+    /// Memory Access Stage
     MemoryStage m {
-        stat: Stat = Stat::Aok, icode: u8 = NOP, ifun: u8 = 0, cnd: bool = false,
-        valA: u64 = 0, valE: u64 = 0,
-        dstE: u8 = RNONE, dstM: u8 = RNONE
+        sflag: bool = false, zflag: bool = false, oflag: bool = false,
+        cc: ConditionCode = ConditionCode { sf: false, zf: false, of: false },
+        stat: Stat = Bub, icode: u8 = NOP, cnd: bool = false,
+        valE: u64 = 0, valA: u64 = 0,
+        dstE: u8 = RNONE, dstM: u8 = RNONE,
+        ifun: u8 = 0
+    }
+    WritebackStage w {
+        stat: Stat = Bub, icode: u8 = NOP, valE: u64 = 0,
+        valM: u64 = 0, dstE: u8 = RNONE, dstM: u8 = RNONE
     }
 }
 
 sim_macro::hcl! {
+
+// Specify the CPU hardware devices set.
+// This will imports all items from the hardware module.
 #![hardware = crate::architectures::hardware_pipe]
+
+// Specify the program counter by an intermediate signal. This value is read by
+// debugger. Conventionally, when we create a breakpoint at the line of code, the
+// debugger seems to stop before executing the line of code. But in this simulator,
+// The breakpoint take effects when the current cycle is executed (so the value of pc
+// is calculated) and before the next cycle enters.
+//
+// Changing this value to other signals makes no difference to the simulation.
+// But it affects the behavior of the debugger.
 #![program_counter = f_pc]
+
+// Specify a boolean intermediate signal to indicate whether the program should
+// be terminated.
 #![termination = prog_term]
-#![stage_alias(F => f, D => d, E => e, M => m)]
+
+// This attribute defines the identifiers for pipeline registers. For "F => f", the
+// identifier `f` is the short name in [`crate::define_stages`], and `F` can be
+// arbitrarily chosen.
+//
+// e.g. M.valA is the value at the start of the cycle (you should treat it as
+// read-only), m.valA is the value at the end of the cycle (you should assign to it).
+#![stage_alias(F => f, D => d, E => e, M => m, W => w)]
 
 use Stat::*;
 
-u8 NE = 4;
-u8 GE = 5;
-u8 G = 6;
-
+// You can use `:====: title :====:` to declare a section. This helps to organize
+// your code and the information displayed by debugger. It makes no difference in
+// the simulation. That means it does not alter the evaluation order of CPU cycle.
 :==============================: Fetch Stage :================================:
-// In the Fetch Stage, D.icode represents the instruction from the previous
-// cycle.
 
-// If we are not using the information from the previous instruction, to ensure
-// the correctness of instruction execution:
-//
-// 1. Either the pipeline register control will include corresponding control
-//    conditions,
-// 2. Or there will be cross-stage signal transmission (forwarding).
-//
-// What address should instruction be fetched at?
-// We use D.icode because we use the icode in the last cycle to determine the
-// next PC.
+// What address should instruction be fetched at
 u64 f_pc = [
-    // Call.  Use instruction constant
-    // If the previous instruction is CALL, the constant value should be the next PC
-    // valC is from Fetch Stage, thus the last cycle
-    D.icode == CALL : D.valC;
-    // Branch misprediction.  Use incremental PC
-    M.icode == JX && M.ifun in { NE, GE, G } && !M.cnd : M.valA;
-    M.icode == JX && !(M.ifun in { NE, GE, G }) && M.cnd : M.valA;
-    // Completion of RET instruction.  Use value from stack
-    // valM is from DEMW stage, thus the current cycle
-    M.icode == RET : m_valM;
-    // Default: Use predicted PC
-    1 : F.pred_pc;
+    // Mispredicted branch. Fetch at incremented PC
+    M.icode == JX && !M.cnd : M.valA;
+    // Completion of RET instruction
+    W.icode == RET : W.valM;
+    // Default: Use predicted value of PC (default to 0)
+     1 : F.pred_pc;
 ];
 
 @set_input(imem, {
     pc: f_pc
 });
 
-// Determine instruction code
-// This signal is prefixed with 'f_' simply to inform that, it is not intended
-// to be used in the Execute stage (why?). Use `D.icode` instead.
+// Determine icode of fetched instruction
 u8 f_icode = [
     imem.error : NOP;
-    1 : imem.icode; // Default: get from instruction memory
+    1 : imem.icode;
 ];
 
-// Determine instruction function
+// Determine ifun
 u8 f_ifun = [
-    imem.error : 0; // set ifun to 0 if error
-    1 : imem.ifun;	// Default: get from instruction memory
+    imem.error : 0xf; // FNONE;
+    1 : imem.ifun;
 ];
 
-bool instr_valid = f_icode in // CMOVX is the same as RRMOVQ
-    { NOP, HALT, CMOVX, IRMOVQ, RMMOVQ, MRMOVQ,
-    OPQ, JX, CALL, RET, PUSHQ, POPQ, IOPQ };
+
+// Is instruction valid?
+bool instr_valid = f_icode in { NOP, HALT, CMOVX, IRMOVQ, RMMOVQ,
+    MRMOVQ, OPQ, JX, CALL, RET, PUSHQ, POPQ, IOPQ };
+
+// Determine status code for fetched instruction
+Stat f_stat = [
+    imem.error : Adr;
+    !instr_valid : Ins;
+    f_icode == HALT : Hlt;
+    1 : Aok;
+];
 
 // Does fetched instruction require a regid byte?
-bool need_regids =
-    f_icode in { CMOVX, OPQ, PUSHQ, POPQ, IRMOVQ, RMMOVQ, MRMOVQ, IOPQ };
+bool need_regids
+    = f_icode in { CMOVX, OPQ, PUSHQ, POPQ, IRMOVQ, RMMOVQ, MRMOVQ, IOPQ };
 
 // Does fetched instruction require a constant word?
 bool need_valC = f_icode in { IRMOVQ, RMMOVQ, MRMOVQ, JX, CALL, IOPQ };
@@ -108,66 +117,44 @@ bool need_valC = f_icode in { IRMOVQ, RMMOVQ, MRMOVQ, JX, CALL, IOPQ };
     old_pc: f_pc,
 });
 
-u64 next_pc = pc_inc.new_pc;
+u64 f_valP =  pc_inc.new_pc;
 
-[u8; 9] align = imem.align;
+[u8; 9] f_align = imem.align;
 
 @set_input(ialign, {
-    align: align,
+    align: f_align,
     need_regids: need_regids,
 });
 
-u64 f_valC = ialign.valC;
-u8 f_ra = ialign.rA;
-u8 f_rb = ialign.rB;
+u64 f_valC =  ialign.valC;
+u8 f_rA = ialign.rA;
+u8 f_rB = ialign.rB;
 
-// Predict the next PC
+// Predict next value of PC
 u64 f_pred_pc = [
-    // take the jump
-    f_icode == JX && f_ifun in { NE, GE, G }: f_valC;
-    // not NE Ge G, dont take the jump
-    // Default: Use incremented PC
-    1: next_pc;
-];
-
-u64 f_valP = [
-    f_icode == JX && !(f_ifun in { NE, GE, G }) : f_valC;
-    1 : next_pc;
+     f_icode in { JX, CALL } : f_valC;
+     1 : f_valP;
 ];
 
 @set_stage(f, {
     pred_pc: f_pred_pc,
 });
 
-
-Stat f_stat = [
-    imem.error : Adr;
-    !instr_valid : Ins;
-    1 : Aok;
-];
-
 @set_stage(d, {
-    valC: f_valC,
-    valP: f_valP,
-    rA: f_ra,
-    rB: f_rb,
     icode: f_icode,
     ifun: f_ifun,
     stat: f_stat,
+    valC: f_valC,
+    valP: f_valP,
+    rA: f_rA,
+    rB: f_rB,
 });
 
-:==============================: Decode Stage :================================:
-// In the Decode Stage, D.icode represents the current instruction.
-
-u8 d_icode = D.icode;
-u8 d_ifun = D.ifun;
-u64 d_valP = D.valP;
-u64 d_valC = D.valC;
-Stat d_stat = D.stat;
+:=======================: Decode and Write Back Stage :========================:
 
 // What register should be used as the A source?
 u8 d_srcA = [
-    D.icode in { CMOVX, RMMOVQ, OPQ, PUSHQ  } : D.rA;
+    D.icode in { CMOVX, RMMOVQ, OPQ, PUSHQ } : D.rA;
     D.icode in { POPQ, RET } : RSP;
     1 : RNONE; // Don't need register
 ];
@@ -179,23 +166,9 @@ u8 d_srcB = [
     1 : RNONE; // Don't need register
 ];
 
-u64 d_valA = [
-    D.icode in { CALL, JX } : D.valP;
-    d_srcA == e_dstE : e_valE;
-    d_srcA == m_dstM : m_valM;
-    1: reg_file.valA;
-];
-u64 d_valB = [
-    d_srcB == e_dstE : e_valE;
-    d_srcB == m_dstM : m_valM;
-    1: reg_file.valB;
-];
-
 // What register should be used as the E destination?
-// The logic of computing dstE is distributed on Decode stage and Execute stage.
 u8 d_dstE = [
-    D.icode in { CMOVX } : D.rB;
-    D.icode in { IRMOVQ, OPQ, IOPQ } : D.rB;
+    D.icode in { CMOVX, IRMOVQ, OPQ, IOPQ } : D.rB;
     D.icode in { PUSHQ, POPQ, CALL, RET } : RSP;
     1 : RNONE; // Don't write any register
 ];
@@ -206,23 +179,49 @@ u8 d_dstM = [
     1 : RNONE; // Don't write any register
 ];
 
+u64 d_rvalA = reg_file.valA;
+u64 d_rvalB = reg_file.valB;
+
+// What should be the A value?
+// Forward into decode stage for valA
+u64 d_valA = [
+    D.icode in { CALL, JX } : D.valP; // Use incremented PC
+    d_srcA == e_dstE : e_valE; // Forward valE from execute
+    d_srcA == M.dstM : m_valM; // Forward valM from memory
+    d_srcA == M.dstE : M.valE; // Forward valE from memory
+    d_srcA == W.dstM : W.valM; // Forward valM from write back
+    d_srcA == W.dstE : W.valE; // Forward valE from write back
+    1 : d_rvalA; // Use value read from register file
+];
+
+u64 d_valB = [
+    d_srcB == e_dstE : e_valE; // Forward valE from execute
+    d_srcB == M.dstM : m_valM; // Forward valM from memory
+    d_srcB == M.dstE : M.valE; // Forward valE from memory
+    d_srcB == W.dstM : W.valM; // Forward valM from write back
+    d_srcB == W.dstE : W.valE; // Forward valE from write back
+    1 : d_rvalB; // Use value read from register file
+];
+
+u64 d_valC = D.valC;
+u8 d_icode = D.icode;
+u8 d_ifun = D.ifun;
+Stat d_stat = D.stat;
+
 @set_stage(e, {
     icode: d_icode,
     ifun: d_ifun,
     stat: d_stat,
     valC: d_valC,
+    srcA: d_srcA,
+    srcB: d_srcB,
     valA: d_valA,
     valB: d_valB,
     dstE: d_dstE,
     dstM: d_dstM,
 });
 
-:=============================: Execute Stage :================================:
-// In the Execute Stage, E.icode represents the current instruction.
-
-u8 e_icode = E.icode;
-u8 e_ifun = E.ifun;
-u64 e_valA = E.valA;
+:==============================: Execute Stage :===============================:
 
 // Select input A to ALU
 u64 aluA = [
@@ -230,21 +229,22 @@ u64 aluA = [
     E.icode in { IRMOVQ, RMMOVQ, MRMOVQ, IOPQ } : E.valC;
     E.icode in { CALL, PUSHQ } : NEG_8;
     E.icode in { RET, POPQ } : 8;
-    // Other instructions don't need ALU
+    1 : 0; // Other instructions don't need ALU
 ];
 
 // Select input B to ALU
 u64 aluB = [
     E.icode in { RMMOVQ, MRMOVQ, OPQ, CALL, PUSHQ, RET, POPQ, IOPQ } : E.valB;
     E.icode in { CMOVX, IRMOVQ } : 0;
-    // Other instructions don't need ALU
+    1 : 0; // Other instructions don't need ALU
 ];
 
 // Set the ALU function
 u8 alufun = [
-    E.icode in { OPQ, IOPQ } : e_ifun;
+    E.icode in { OPQ, IOPQ } : E.ifun;
     1 : ADD;
 ];
+
 @set_input(alu, {
     a: aluA,
     b: aluB,
@@ -252,7 +252,9 @@ u8 alufun = [
 });
 
 // Should the condition codes be updated?
-bool set_cc = E.icode in { OPQ, IOPQ };
+bool set_cc = E.icode in { OPQ, IOPQ } &&
+    // State changes only during normal operation
+    !(m_stat in { Adr, Ins, Hlt }) && !(W.stat in { Adr, Ins, Hlt });
 
 u64 e_valE = alu.e;
 
@@ -264,7 +266,9 @@ u64 e_valE = alu.e;
     set_cc: set_cc,
 });
 
+
 ConditionCode cc = reg_cc.cc;
+u8 e_ifun = E.ifun;
 
 @set_input(cond, {
     cc: cc,
@@ -273,12 +277,18 @@ ConditionCode cc = reg_cc.cc;
 
 bool e_cnd = cond.cnd;
 
-u8 e_dstE = [
-    E.icode == CMOVX && !e_cnd : RNONE;
-    1 : E.dstE;
-];
-u8 e_dstM = E.dstM;
+// Generate valA in execute stage
+u64 e_valA = E.valA;    // Pass valA through stage
 
+// Set dstE to RNONE in event of not-taken conditional move
+// u8 e_dstE = [
+//     E.icode == CMOVX && !e_cnd : RNONE;
+//     1 : E.dstE;
+// ];
+u8 e_dstE = E.dstE;
+
+u8 e_dstM = E.dstM;
+u8 e_icode = E.icode;
 Stat e_stat = E.stat;
 
 @set_stage(m, {
@@ -290,18 +300,23 @@ Stat e_stat = E.stat;
     cnd: e_cnd,
     valE: e_valE,
     valA: e_valA,
+    cc: cc
+    // sflag: cc.sf,
+    // zflag: cc.zf,
+    // oflag: cc.of,
 });
 
-:==============================: Memory Stage :================================:
+:===============================: Memory Stage :===============================:
 
-u64 m_valE = M.valE;
-u8 m_ifun = M.ifun;
+ConditionCode m_cc = M.cc;
+u8 m_icode = M.icode;
 
-// Set read control signal
-bool mem_read = M.icode in { MRMOVQ, POPQ, RET };
+@set_input(cond, {
+    cc: m_cc,
+    condfun: m_icode,
+});
 
-// Set write control signal
-bool mem_write = M.icode in { RMMOVQ, PUSHQ, CALL };
+bool m_cnd = cond.cnd;
 
 // Select memory address
 u64 mem_addr = [
@@ -310,12 +325,13 @@ u64 mem_addr = [
     // Other instructions don't need address
 ];
 
-// We've feed D.valP into d_valA. Thus M.valP is not needed.
-u64 mem_data = [
-    // Value from register
-    M.icode in { RMMOVQ, PUSHQ, CALL } : M.valA;
-    // Default: Don't write anything
-];
+// Set read control signal
+bool mem_read = M.icode in { MRMOVQ, POPQ, RET };
+
+// Set write control signal
+bool mem_write = M.icode in { RMMOVQ, PUSHQ, CALL };
+
+u64 mem_data = M.valA;
 
 @set_input(dmem, {
     read: mem_read,
@@ -324,109 +340,179 @@ u64 mem_data = [
     datain: mem_data,
 });
 
+// Update the status
+Stat m_stat = [
+    dmem.error : Adr;
+    1 : M.stat;
+];
+
+
+
 u64 m_valM = dmem.dataout;
+u64 m_valE = M.valE;
 u8 m_dstE = M.dstE;
 u8 m_dstM = M.dstM;
+
+@set_stage(w, {
+    stat: m_stat,
+    icode: m_icode,
+    valE: m_valE,
+    valM: m_valM,
+    dstE: m_dstE,
+    dstM: m_dstM,
+});
+
+:=============================: Write Back Stage :=============================:
+
+// Set E port register ID
+u8 w_dstE = W.dstE;
+
+// Set E port value
+u64 w_valE = W.valE;
+
+// Set M port register ID
+u8 w_dstM = W.dstM;
+
+// Set M port value
+u64 w_valM = W.valM;
 
 @set_input(reg_file, {
     srcA: d_srcA,
     srcB: d_srcB,
-    dstE: m_dstE,
-    dstM: m_dstM,
-    valM: m_valM,
-    valE: m_valE,
+    dstE: w_dstE,
+    dstM: w_dstM,
+    valM: w_valM,
+    valE: w_valE,
 });
 
-// Determine instruction status
-Stat m_stat = [
-    dmem.error : Adr;
-    M.icode == HALT : Hlt;
-    1 : M.stat;
+// Update processor status (used for outside monitoring)
+Stat prog_stat = [
+    W.stat == Bub : Aok;
+    1 : W.stat;
 ];
 
-bool prog_term = m_stat in { Hlt, Adr, Ins };
+bool prog_term = [
+    prog_stat in { Aok, Bub } : false;
+    1 : true
+];
 
 :========================: Pipeline Register Control :=========================:
 
-// If a branch misprediction is detected during the Execute stage, it means that
-// the instruction currently in the Decode stage is invalid. Therefore, the next
-// cycle’s Execute stage needs to insert a bubble.
-bool branch_mispred = (E.icode == JX && E.ifun in { NE, GE, G } && !e_cnd) || 
-                      (E.icode == JX && !(E.ifun in { NE, GE, G }) && e_cnd);
-
-// If a RET instruction is detected in either the Decode or Execute stage, then
-// the instruction in the current Fetch stage is invalid. Therefore, a bubble
-// needs to be inserted in the Fetch stage for the next cycle.
-//
-// In fact, when E.icode == RET, the instruction in the current Decode stage is 
-// also invalid, but because the D.icode in the previous cycle was RET, at this
-// point D.icode == NOP, so there's no need to add a condition for e_bubble.
-bool ret_harzard = RET in { D.icode, E.icode };
-
-// This instruction needs to read from a register whose data was loaded from
-// memory by the previous instruction, but the previous instruction is still in
-// the Execute stage, causing a data hazard.
-bool load_use_harzard = E.icode in { MRMOVQ, POPQ } && E.dstM in { d_srcA, d_srcB };
-// an equivalent expression:
-// bool load_use_harzard = E.dstM != RNONE && E.dstM in { d_srcA, d_srcB };
-
-// Unlike in `pipe_s4a`, here we do not need to consider the case of branch 
-// misprediction (since in the next cycle, Fetch will always get the `f_pc`
-// from `M.valP`).
-bool f_stall = ret_harzard || load_use_harzard;
+// Should I stall or inject a bubble into Pipeline Register F?
+// At most one of these can be true.
+bool f_bubble = false;
+bool f_stall =
+    // Conditions for a load/use hazard
+    E.icode in { MRMOVQ, POPQ } && E.dstM in { d_srcA, d_srcB } ||
+    // Stalling at fetch while ret passes through pipeline
+    RET in {D.icode, E.icode, M.icode};
 
 @set_stage(f, {
+    bubble: f_bubble,
     stall: f_stall,
 });
 
+// Should I stall or inject a bubble into Pipeline Register D?
+// At most one of these can be true.
+bool d_stall =
+    // Conditions for a load/use hazard
+    E.icode in { MRMOVQ, POPQ } && E.dstM in { d_srcA, d_srcB };
 
-bool d_stall = load_use_harzard;
-
-// Unlike in `pipe_s4a`, when a branch misprediction occurs, we directly insert
-// a bubble, because the instruction in the Fetch stage at that point is invalid.
-// Actually, ret_harzard and d_stall cannot be true at the same time.
-bool d_bubble = branch_mispred || ret_harzard && !d_stall;
+bool d_bubble =
+    // Mispredicted branch
+    (E.icode == JX && !e_cnd) ||
+    // Stalling at fetch while ret passes through pipeline
+    // but not condition for a load/use hazard
+    !(E.icode in { MRMOVQ, POPQ } && E.dstM in { d_srcA, d_srcB }) &&
+      RET in {D.icode, E.icode, M.icode};
 
 @set_stage(d, {
     stall: d_stall,
     bubble: d_bubble,
 });
 
-bool e_bubble = branch_mispred || load_use_harzard;
+// Should I stall or inject a bubble into Pipeline Register E?
+// At most one of these can be true.
+bool e_stall = false;
+bool e_bubble =
+    // Mispredicted branch
+    (E.icode == JX && !e_cnd) ||
+    // Conditions for a load/use hazard
+    E.icode in { MRMOVQ, POPQ } && E.dstM in { d_srcA, d_srcB };
 
 @set_stage(e, {
+    stall: e_stall,
     bubble: e_bubble,
 });
 
+// Should I stall or inject a bubble into Pipeline Register M?
+// At most one of these can be true.
+bool m_stall = false;
+// Start injecting bubbles as soon as exception passes through memory stage
+bool m_bubble =
+    m_stat in { Adr, Ins, Hlt } || W.stat in { Adr, Ins, Hlt };
+
+@set_stage(m, {
+    stall: m_stall,
+    bubble: m_bubble,
+});
+
+// Should I stall or inject a bubble into Pipeline Register W?
+bool w_stall = W.stat in { Adr, Ins, Hlt };
+bool w_bubble = false;
+
+@set_stage(w, {
+    stall: w_stall,
+    bubble: w_bubble,
+});
 }
 
-impl crate::framework::PipeSim<Arch> {
-    fn print_state(&self) {
-        use crate::utils::format_ctrl;
-        use crate::utils::format_icode;
+mod nofmt {
+    use super::*;
+    use crate::{
+        framework::PipeSim,
+        utils::{format_ctrl, format_icode},
+    };
+    impl PipeSim<Arch> {
+        // print state at the beginning of a cycle
+        pub fn print_state(&self) {
+            // For stage registers, outputs contains information for the following cycle
 
-        #[allow(non_snake_case)]
-        let PipeRegs {
-            f: _,
-            d: D,
-            e: E,
-            m: M,
-        } = &self.cur_state;
-        let PipeRegs { f, d, e, m } = &self.nex_state;
+            #[allow(non_snake_case)]
+            let PipeRegs {
+                f: _,
+                d: D,
+                e: E,
+                m: M,
+                w: W,
+            } = &self.cur_state;
+            let PipeRegs { f, d, e, m, w } = &self.nex_state;
 
-        println!(
-            r#"      Fetch  Decode Exec   MemWrb
-icode {f_icode} {d_icode} {e_icode} {m_icode}
-ctrl  {fctrl} {dctrl} {ectrl} {mctrl}
-"#,
-            f_icode = format_icode(self.cur_inter.f_icode),
-            d_icode = format_icode(D.icode),
-            e_icode = format_icode(E.icode),
-            m_icode = format_icode(M.icode),
-            fctrl = format_ctrl(f.bubble, f.stall),
-            dctrl = format_ctrl(d.bubble, d.stall),
-            ectrl = format_ctrl(e.bubble, e.stall),
-            mctrl = format_ctrl(m.bubble, m.stall),
-        );
+            println!(
+                r#"Stat    F {fstat}    D {dstat}    E {estat}    M {mstat}    W {wstat}
+icode   f {ficode} D {dicode} E {eicode} M {micode} W {wicode}
+Control F {fctrl:6} D {dctrl:6} E {ectrl:6} M {mctrl:6} W {wctrl:6}"#,
+                fstat = Aok,
+                dstat = D.stat,
+                estat = E.stat,
+                mstat = M.stat,
+                wstat = W.stat,
+                // stage control at the end of last cycle
+                // e.g. dctrl is computed in fetch stage. if dctrl is bubble,
+                // then in the next cycle, D.icode will be NOP.
+                // e. Controls are applied between cycles.
+                fctrl = format_ctrl(f.bubble, f.stall),
+                dctrl = format_ctrl(d.bubble, d.stall),
+                ectrl = format_ctrl(e.bubble, e.stall),
+                mctrl = format_ctrl(m.bubble, m.stall),
+                wctrl = format_ctrl(w.bubble, w.stall),
+                // ficode is actually computed value
+                ficode = format_icode(d.icode),
+                dicode = format_icode(D.icode),
+                eicode = format_icode(E.icode),
+                micode = format_icode(M.icode),
+                wicode = format_icode(W.icode),
+            );
+        }
     }
 }

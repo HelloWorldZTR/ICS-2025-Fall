@@ -24,6 +24,11 @@
       },
       "links": [
         {
+          "source": "align",
+          "target": "ialign-align",
+          "value": 1.0
+        },
+        {
           "source": "alu",
           "target": "alu-e",
           "value": 1.0
@@ -40,7 +45,7 @@
         },
         {
           "source": "alu-e",
-          "target": "e_valE",
+          "target": "valE",
           "value": 1.0
         },
         {
@@ -84,6 +89,16 @@
           "value": 1.0
         },
         {
+          "source": "cnd",
+          "target": "dstE",
+          "value": 1.0
+        },
+        {
+          "source": "cnd",
+          "target": "new_pc",
+          "value": 1.0
+        },
+        {
           "source": "cond",
           "target": "cond-cnd",
           "value": 1.0
@@ -95,82 +110,12 @@
         },
         {
           "source": "cond-cnd",
-          "target": "e_cnd",
+          "target": "cnd",
           "value": 1.0
         },
         {
           "source": "cond-condfun",
           "target": "cond",
-          "value": 1.0
-        },
-        {
-          "source": "d_rvalA",
-          "target": "d_valA",
-          "value": 1.0
-        },
-        {
-          "source": "d_rvalB",
-          "target": "d_valB",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcA",
-          "target": "d_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcA",
-          "target": "d_stall",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcA",
-          "target": "d_valA",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcA",
-          "target": "e_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcA",
-          "target": "f_stall",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcA",
-          "target": "reg_file-srcA",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcB",
-          "target": "d_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcB",
-          "target": "d_stall",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcB",
-          "target": "d_valB",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcB",
-          "target": "e_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcB",
-          "target": "f_stall",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcB",
-          "target": "reg_file-srcB",
           "value": 1.0
         },
         {
@@ -195,12 +140,12 @@
         },
         {
           "source": "dmem-dataout",
-          "target": "m_valM",
+          "target": "valM",
           "value": 1.0
         },
         {
           "source": "dmem-error",
-          "target": "m_stat",
+          "target": "stat",
           "value": 1.0
         },
         {
@@ -214,98 +159,13 @@
           "value": 1.0
         },
         {
-          "source": "e_cnd",
-          "target": "d_bubble",
+          "source": "dstE",
+          "target": "reg_write-dstE",
           "value": 1.0
         },
         {
-          "source": "e_cnd",
-          "target": "e_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "e_cnd",
-          "target": "e_dstE",
-          "value": 1.0
-        },
-        {
-          "source": "e_dstE",
-          "target": "d_valA",
-          "value": 1.0
-        },
-        {
-          "source": "e_dstE",
-          "target": "d_valB",
-          "value": 1.0
-        },
-        {
-          "source": "e_ifun",
-          "target": "cond-condfun",
-          "value": 1.0
-        },
-        {
-          "source": "e_valE",
-          "target": "d_valA",
-          "value": 1.0
-        },
-        {
-          "source": "e_valE",
-          "target": "d_valB",
-          "value": 1.0
-        },
-        {
-          "source": "e_valE",
-          "target": "reg_cc-e",
-          "value": 1.0
-        },
-        {
-          "source": "f_align",
-          "target": "ialign-align",
-          "value": 1.0
-        },
-        {
-          "source": "f_icode",
-          "target": "f_pred_pc",
-          "value": 1.0
-        },
-        {
-          "source": "f_icode",
-          "target": "f_stat",
-          "value": 1.0
-        },
-        {
-          "source": "f_icode",
-          "target": "instr_valid",
-          "value": 1.0
-        },
-        {
-          "source": "f_icode",
-          "target": "need_regids",
-          "value": 1.0
-        },
-        {
-          "source": "f_icode",
-          "target": "need_valC",
-          "value": 1.0
-        },
-        {
-          "source": "f_pc",
-          "target": "imem-pc",
-          "value": 1.0
-        },
-        {
-          "source": "f_pc",
-          "target": "pc_inc-old_pc",
-          "value": 1.0
-        },
-        {
-          "source": "f_valC",
-          "target": "f_pred_pc",
-          "value": 1.0
-        },
-        {
-          "source": "f_valP",
-          "target": "f_pred_pc",
+          "source": "dstM",
+          "target": "reg_write-dstM",
           "value": 1.0
         },
         {
@@ -335,17 +195,127 @@
         },
         {
           "source": "ialign-rA",
-          "target": "f_rA",
+          "target": "dstM",
+          "value": 1.0
+        },
+        {
+          "source": "ialign-rA",
+          "target": "srcA",
           "value": 1.0
         },
         {
           "source": "ialign-rB",
-          "target": "f_rB",
+          "target": "dstE",
+          "value": 1.0
+        },
+        {
+          "source": "ialign-rB",
+          "target": "srcB",
           "value": 1.0
         },
         {
           "source": "ialign-valC",
-          "target": "f_valC",
+          "target": "aluA",
+          "value": 1.0
+        },
+        {
+          "source": "ialign-valC",
+          "target": "new_pc",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "aluA",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "aluB",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "alufun",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "dstE",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "dstM",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "instr_valid",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "mem_addr",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "mem_data",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "mem_read",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "mem_write",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "need_regids",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "need_valC",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "new_pc",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "set_cc",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "srcA",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "srcB",
+          "value": 1.0
+        },
+        {
+          "source": "icode",
+          "target": "stat",
+          "value": 1.0
+        },
+        {
+          "source": "ifun",
+          "target": "alufun",
+          "value": 1.0
+        },
+        {
+          "source": "ifun",
+          "target": "cond-condfun",
           "value": 1.0
         },
         {
@@ -370,32 +340,32 @@
         },
         {
           "source": "imem-align",
-          "target": "f_align",
+          "target": "align",
           "value": 1.0
         },
         {
           "source": "imem-error",
-          "target": "f_icode",
+          "target": "icode",
           "value": 1.0
         },
         {
           "source": "imem-error",
-          "target": "f_ifun",
+          "target": "ifun",
           "value": 1.0
         },
         {
           "source": "imem-error",
-          "target": "f_stat",
+          "target": "stat",
           "value": 1.0
         },
         {
           "source": "imem-icode",
-          "target": "f_icode",
+          "target": "icode",
           "value": 1.0
         },
         {
           "source": "imem-ifun",
-          "target": "f_ifun",
+          "target": "ifun",
           "value": 1.0
         },
         {
@@ -405,27 +375,7 @@
         },
         {
           "source": "instr_valid",
-          "target": "f_stat",
-          "value": 1.0
-        },
-        {
-          "source": "m_stat",
-          "target": "m_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "m_stat",
-          "target": "set_cc",
-          "value": 1.0
-        },
-        {
-          "source": "m_valM",
-          "target": "d_valA",
-          "value": 1.0
-        },
-        {
-          "source": "m_valM",
-          "target": "d_valB",
+          "target": "stat",
           "value": 1.0
         },
         {
@@ -464,6 +414,16 @@
           "value": 1.0
         },
         {
+          "source": "pc",
+          "target": "imem-pc",
+          "value": 1.0
+        },
+        {
+          "source": "pc",
+          "target": "pc_inc-old_pc",
+          "value": 1.0
+        },
+        {
           "source": "pc_inc",
           "target": "pc_inc-new_pc",
           "value": 1.0
@@ -480,17 +440,12 @@
         },
         {
           "source": "pc_inc-new_pc",
-          "target": "f_valP",
+          "target": "valP",
           "value": 1.0
         },
         {
           "source": "pc_inc-old_pc",
           "target": "pc_inc",
-          "value": 1.0
-        },
-        {
-          "source": "prog_stat",
-          "target": "prog_term",
           "value": 1.0
         },
         {
@@ -529,53 +484,63 @@
           "value": 1.0
         },
         {
-          "source": "reg_file",
-          "target": "reg_file-valA",
+          "source": "reg_read",
+          "target": "reg_read-valA",
           "value": 1.0
         },
         {
-          "source": "reg_file",
-          "target": "reg_file-valB",
+          "source": "reg_read",
+          "target": "reg_read-valB",
           "value": 1.0
         },
         {
-          "source": "reg_file-dstE",
-          "target": "reg_file",
+          "source": "reg_read-srcA",
+          "target": "reg_read",
           "value": 1.0
         },
         {
-          "source": "reg_file-dstM",
-          "target": "reg_file",
+          "source": "reg_read-srcB",
+          "target": "reg_read",
           "value": 1.0
         },
         {
-          "source": "reg_file-srcA",
-          "target": "reg_file",
+          "source": "reg_read-valA",
+          "target": "aluA",
           "value": 1.0
         },
         {
-          "source": "reg_file-srcB",
-          "target": "reg_file",
+          "source": "reg_read-valA",
+          "target": "mem_addr",
           "value": 1.0
         },
         {
-          "source": "reg_file-valA",
-          "target": "d_rvalA",
+          "source": "reg_read-valA",
+          "target": "mem_data",
           "value": 1.0
         },
         {
-          "source": "reg_file-valB",
-          "target": "d_rvalB",
+          "source": "reg_read-valB",
+          "target": "aluB",
           "value": 1.0
         },
         {
-          "source": "reg_file-valE",
-          "target": "reg_file",
+          "source": "reg_write-dstE",
+          "target": "reg_write",
           "value": 1.0
         },
         {
-          "source": "reg_file-valM",
-          "target": "reg_file",
+          "source": "reg_write-dstM",
+          "target": "reg_write",
+          "value": 1.0
+        },
+        {
+          "source": "reg_write-valE",
+          "target": "reg_write",
+          "value": 1.0
+        },
+        {
+          "source": "reg_write-valM",
+          "target": "reg_write",
           "value": 1.0
         },
         {
@@ -584,27 +549,63 @@
           "value": 1.0
         },
         {
-          "source": "w_dstE",
-          "target": "reg_file-dstE",
+          "source": "srcA",
+          "target": "reg_read-srcA",
           "value": 1.0
         },
         {
-          "source": "w_dstM",
-          "target": "reg_file-dstM",
+          "source": "srcB",
+          "target": "reg_read-srcB",
           "value": 1.0
         },
         {
-          "source": "w_valE",
-          "target": "reg_file-valE",
+          "source": "stat",
+          "target": "prog_term",
           "value": 1.0
         },
         {
-          "source": "w_valM",
-          "target": "reg_file-valM",
+          "source": "valE",
+          "target": "mem_addr",
+          "value": 1.0
+        },
+        {
+          "source": "valE",
+          "target": "reg_cc-e",
+          "value": 1.0
+        },
+        {
+          "source": "valE",
+          "target": "reg_write-valE",
+          "value": 1.0
+        },
+        {
+          "source": "valM",
+          "target": "new_pc",
+          "value": 1.0
+        },
+        {
+          "source": "valM",
+          "target": "reg_write-valM",
+          "value": 1.0
+        },
+        {
+          "source": "valP",
+          "target": "mem_data",
+          "value": 1.0
+        },
+        {
+          "source": "valP",
+          "target": "new_pc",
           "value": 1.0
         }
       ],
       "data": [
+        {
+          "name": "align",
+          "itemStyle": {
+            "color": "rgba(255,0,0,0.5)"
+          }
+        },
         {
           "name": "alu",
           "itemStyle": {
@@ -660,6 +661,12 @@
           }
         },
         {
+          "name": "cnd",
+          "itemStyle": {
+            "color": "rgba(255,0,0,0.5)"
+          }
+        },
+        {
           "name": "cond",
           "itemStyle": {
             "color": "rgba(0,0,255,0.5)"
@@ -679,90 +686,6 @@
         },
         {
           "name": "cond-condfun",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_bubble",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_dstE",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_dstM",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_icode",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_ifun",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_rvalA",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_rvalB",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_srcA",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_srcB",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_stall",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_stat",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_valA",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_valB",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_valC",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -810,133 +733,13 @@
           }
         },
         {
-          "name": "e_bubble",
+          "name": "dstE",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "e_cnd",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "e_dstE",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "e_dstM",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "e_icode",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "e_ifun",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "e_stall",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "e_stat",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "e_valA",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "e_valE",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_align",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_bubble",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_icode",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_ifun",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_pc",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_pred_pc",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_rA",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_rB",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_stall",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_stat",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_valC",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_valP",
+          "name": "dstM",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -973,6 +776,18 @@
         },
         {
           "name": "ialign-valC",
+          "itemStyle": {
+            "color": "rgba(255,0,0,0.5)"
+          }
+        },
+        {
+          "name": "icode",
+          "itemStyle": {
+            "color": "rgba(255,0,0,0.5)"
+          }
+        },
+        {
+          "name": "ifun",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -1020,60 +835,6 @@
           }
         },
         {
-          "name": "m_bubble",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_cc",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_dstE",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_dstM",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_icode",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_stall",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_stat",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_valE",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_valM",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
           "name": "mem_addr",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
@@ -1110,6 +871,18 @@
           }
         },
         {
+          "name": "new_pc",
+          "itemStyle": {
+            "color": "rgba(255,0,0,0.5)"
+          }
+        },
+        {
+          "name": "pc",
+          "itemStyle": {
+            "color": "rgba(255,0,0,0.5)"
+          }
+        },
+        {
           "name": "pc_inc",
           "itemStyle": {
             "color": "rgba(0,0,255,0.5)"
@@ -1135,12 +908,6 @@
         },
         {
           "name": "pc_inc-old_pc",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "prog_stat",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -1194,55 +961,61 @@
           }
         },
         {
-          "name": "reg_file",
+          "name": "reg_read",
           "itemStyle": {
             "color": "rgba(0,0,255,0.5)"
           }
         },
         {
-          "name": "reg_file-dstE",
+          "name": "reg_read-srcA",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "reg_file-dstM",
+          "name": "reg_read-srcB",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "reg_file-srcA",
+          "name": "reg_read-valA",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "reg_file-srcB",
+          "name": "reg_read-valB",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "reg_file-valA",
+          "name": "reg_write",
+          "itemStyle": {
+            "color": "rgba(0,0,255,0.5)"
+          }
+        },
+        {
+          "name": "reg_write-dstE",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "reg_file-valB",
+          "name": "reg_write-dstM",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "reg_file-valE",
+          "name": "reg_write-valE",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "reg_file-valM",
+          "name": "reg_write-valM",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -1254,37 +1027,37 @@
           }
         },
         {
-          "name": "w_bubble",
+          "name": "srcA",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "w_dstE",
+          "name": "srcB",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "w_dstM",
+          "name": "stat",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "w_stall",
+          "name": "valE",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "w_valE",
+          "name": "valM",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "w_valM",
+          "name": "valP",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
