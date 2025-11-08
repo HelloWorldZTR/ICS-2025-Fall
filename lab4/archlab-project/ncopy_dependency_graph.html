@@ -79,8 +79,18 @@
           "value": 1.0
         },
         {
-          "source": "cc",
-          "target": "cond-cc",
+          "source": "branch_mispred",
+          "target": "d_bubble",
+          "value": 1.0
+        },
+        {
+          "source": "branch_mispred",
+          "target": "e_bubble",
+          "value": 1.0
+        },
+        {
+          "source": "branch_mispred",
+          "target": "m_bubble",
           "value": 1.0
         },
         {
@@ -95,7 +105,7 @@
         },
         {
           "source": "cond-cnd",
-          "target": "e_cnd",
+          "target": "m_cnd",
           "value": 1.0
         },
         {
@@ -214,21 +224,6 @@
           "value": 1.0
         },
         {
-          "source": "e_cnd",
-          "target": "d_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "e_cnd",
-          "target": "e_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "e_cnd",
-          "target": "e_dstE",
-          "value": 1.0
-        },
-        {
           "source": "e_dstE",
           "target": "d_valA",
           "value": 1.0
@@ -236,11 +231,6 @@
         {
           "source": "e_dstE",
           "target": "d_valB",
-          "value": 1.0
-        },
-        {
-          "source": "e_ifun",
-          "target": "cond-condfun",
           "value": 1.0
         },
         {
@@ -406,6 +396,26 @@
         {
           "source": "instr_valid",
           "target": "f_stat",
+          "value": 1.0
+        },
+        {
+          "source": "m_cc",
+          "target": "cond-cc",
+          "value": 1.0
+        },
+        {
+          "source": "m_cnd",
+          "target": "branch_mispred",
+          "value": 1.0
+        },
+        {
+          "source": "m_cnd",
+          "target": "m_dstE",
+          "value": 1.0
+        },
+        {
+          "source": "m_icode",
+          "target": "cond-condfun",
           "value": 1.0
         },
         {
@@ -649,6 +659,12 @@
         },
         {
           "name": "alufun",
+          "itemStyle": {
+            "color": "rgba(255,0,0,0.5)"
+          }
+        },
+        {
+          "name": "branch_mispred",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -1027,6 +1043,12 @@
         },
         {
           "name": "m_cc",
+          "itemStyle": {
+            "color": "rgba(255,0,0,0.5)"
+          }
+        },
+        {
+          "name": "m_cnd",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }

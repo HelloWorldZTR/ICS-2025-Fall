@@ -1,0 +1,4 @@
+irmovq $10, %rbx
+xorq %rax, %rax
+cmovg %rbx, %rax
+halt

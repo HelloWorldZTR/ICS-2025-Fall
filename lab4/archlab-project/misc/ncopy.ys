@@ -33,42 +33,41 @@ Loop:
     # mrmovq 48(%rdi), %r14
 
     # store 
-    rmmovq %r8, 0(%rsi)
-    rmmovq %r9, 8(%rsi)
-    rmmovq %r10, 16(%rsi)
-    rmmovq %r11, 24(%rsi)
-    rmmovq %r12, 32(%rsi)
-    rmmovq %r13, 40(%rsi)
-    # rmmovq %r14, 48(%rsi)
 
     # update count
     rrmovq %rax, %rcx
     iaddq $1, %rcx
+    rmmovq %r8, 0(%rsi)
     andq %r8, %r8
     cmovg %rcx, %rax
 
     rrmovq %rax, %rcx
     iaddq $1, %rcx
+    rmmovq %r9, 8(%rsi)
     andq %r9, %r9
     cmovg %rcx, %rax
 
     rrmovq %rax, %rcx
     iaddq $1, %rcx
+    rmmovq %r10, 16(%rsi)
     andq %r10, %r10
     cmovg %rcx, %rax
 
     rrmovq %rax, %rcx
     iaddq $1, %rcx
+    rmmovq %r11, 24(%rsi)
     andq %r11, %r11
     cmovg %rcx, %rax
 
     rrmovq %rax, %rcx
     iaddq $1, %rcx
+    rmmovq %r12, 32(%rsi)
     andq %r12, %r12
     cmovg %rcx, %rax
 
     rrmovq %rax, %rcx
     iaddq $1, %rcx
+    rmmovq %r13, 40(%rsi)
     andq %r13, %r13
     cmovg %rcx, %rax
 

@@ -17,7 +17,6 @@ crate::define_stages! {
     }
     /// Memory Access Stage
     MemoryStage m {
-        sflag: bool = false, zflag: bool = false, oflag: bool = false,
         cc: ConditionCode = ConditionCode { sf: false, zf: false, of: false },
         stat: Stat = Bub, icode: u8 = NOP, cnd: bool = false,
         valE: u64 = 0, valA: u64 = 0,
@@ -26,7 +25,7 @@ crate::define_stages! {
     }
     WritebackStage w {
         stat: Stat = Bub, icode: u8 = NOP, valE: u64 = 0,
-        valM: u64 = 0, dstE: u8 = RNONE, dstM: u8 = RNONE
+        valM: u64 = 0, dstE: u8 = RNONE, dstM: u8 = RNONE, valA: u64 = 0, cnd: bool = false
     }
 }
 
@@ -68,7 +67,7 @@ use Stat::*;
 // What address should instruction be fetched at
 u64 f_pc = [
     // Mispredicted branch. Fetch at incremented PC
-    M.icode == JX && !M.cnd : M.valA;
+    W.icode == JX && !W.cnd : W.valA;
     // Completion of RET instruction
     W.icode == RET : W.valM;
     // Default: Use predicted value of PC (default to 0)
@@ -186,18 +185,18 @@ u64 d_rvalB = reg_file.valB;
 // Forward into decode stage for valA
 u64 d_valA = [
     D.icode in { CALL, JX } : D.valP; // Use incremented PC
-    d_srcA == e_dstE : e_valE; // Forward valE from execute
+    (d_srcA == e_dstE && E.icode != CMOVX) : e_valE; // Forward valE from execute
     d_srcA == M.dstM : m_valM; // Forward valM from memory
-    d_srcA == M.dstE : M.valE; // Forward valE from memory
+    d_srcA == m_dstE : M.valE; // Forward valE from memory
     d_srcA == W.dstM : W.valM; // Forward valM from write back
     d_srcA == W.dstE : W.valE; // Forward valE from write back
     1 : d_rvalA; // Use value read from register file
 ];
 
 u64 d_valB = [
-    d_srcB == e_dstE : e_valE; // Forward valE from execute
+    (d_srcB == e_dstE && E.icode != CMOVX) : e_valE; // Forward valE from execute
     d_srcB == M.dstM : m_valM; // Forward valM from memory
-    d_srcB == M.dstE : M.valE; // Forward valE from memory
+    d_srcB == m_dstE : M.valE; // Forward valE from memory
     d_srcB == W.dstM : W.valM; // Forward valM from write back
     d_srcB == W.dstE : W.valE; // Forward valE from write back
     1 : d_rvalB; // Use value read from register file
@@ -270,12 +269,12 @@ u64 e_valE = alu.e;
 ConditionCode cc = reg_cc.cc;
 u8 e_ifun = E.ifun;
 
-@set_input(cond, {
-    cc: cc,
-    condfun: e_ifun,
-});
+// @set_input(cond, {
+//     cc: cc,
+//     condfun: e_ifun,
+// });
 
-bool e_cnd = cond.cnd;
+// bool e_cnd = true;
 
 // Generate valA in execute stage
 u64 e_valA = E.valA;    // Pass valA through stage
@@ -297,7 +296,7 @@ Stat e_stat = E.stat;
     icode: e_icode,
     ifun: e_ifun,
     dstE: e_dstE,
-    cnd: e_cnd,
+    // cnd: e_cnd,
     valE: e_valE,
     valA: e_valA,
     cc: cc
@@ -310,10 +309,11 @@ Stat e_stat = E.stat;
 
 ConditionCode m_cc = M.cc;
 u8 m_icode = M.icode;
+u8 m_ifun = M.ifun;
 
 @set_input(cond, {
     cc: m_cc,
-    condfun: m_icode,
+    condfun: m_ifun,
 });
 
 bool m_cnd = cond.cnd;
@@ -349,8 +349,14 @@ Stat m_stat = [
 
 
 u64 m_valM = dmem.dataout;
-u64 m_valE = M.valE;
-u8 m_dstE = M.dstE;
+u64 m_valE = [
+    M.icode == CMOVX && !m_cnd : 0x1234567890abcdef;
+    1 : M.valE;
+];
+u8 m_dstE = [
+    m_icode == CMOVX && !m_cnd : RNONE;
+    1 : M.dstE;
+];
 u8 m_dstM = M.dstM;
 
 @set_stage(w, {
@@ -360,6 +366,8 @@ u8 m_dstM = M.dstM;
     valM: m_valM,
     dstE: m_dstE,
     dstM: m_dstM,
+    cnd: m_cnd,
+    valA: mem_data,
 });
 
 :=============================: Write Back Stage :=============================:
@@ -400,10 +408,15 @@ bool prog_term = [
 
 // Should I stall or inject a bubble into Pipeline Register F?
 // At most one of these can be true.
+bool branch_mispred = M.icode == JX && !m_cnd;
+bool load_use_hazard =
+    (E.icode in { MRMOVQ, POPQ } && E.dstM in { d_srcA, d_srcB }) || 
+    (E.icode == CMOVX && E.dstE in { d_srcA, d_srcB });
+
 bool f_bubble = false;
 bool f_stall =
     // Conditions for a load/use hazard
-    E.icode in { MRMOVQ, POPQ } && E.dstM in { d_srcA, d_srcB } ||
+    load_use_hazard ||
     // Stalling at fetch while ret passes through pipeline
     RET in {D.icode, E.icode, M.icode};
 
@@ -416,14 +429,14 @@ bool f_stall =
 // At most one of these can be true.
 bool d_stall =
     // Conditions for a load/use hazard
-    E.icode in { MRMOVQ, POPQ } && E.dstM in { d_srcA, d_srcB };
+    load_use_hazard && !branch_mispred;
 
 bool d_bubble =
     // Mispredicted branch
-    (E.icode == JX && !e_cnd) ||
+    branch_mispred ||
     // Stalling at fetch while ret passes through pipeline
     // but not condition for a load/use hazard
-    !(E.icode in { MRMOVQ, POPQ } && E.dstM in { d_srcA, d_srcB }) &&
+    !(load_use_hazard) &&
       RET in {D.icode, E.icode, M.icode};
 
 @set_stage(d, {
@@ -436,9 +449,9 @@ bool d_bubble =
 bool e_stall = false;
 bool e_bubble =
     // Mispredicted branch
-    (E.icode == JX && !e_cnd) ||
+    branch_mispred ||
     // Conditions for a load/use hazard
-    E.icode in { MRMOVQ, POPQ } && E.dstM in { d_srcA, d_srcB };
+    load_use_hazard;
 
 @set_stage(e, {
     stall: e_stall,
@@ -449,7 +462,7 @@ bool e_bubble =
 // At most one of these can be true.
 bool m_stall = false;
 // Start injecting bubbles as soon as exception passes through memory stage
-bool m_bubble =
+bool m_bubble = branch_mispred ||
     m_stat in { Adr, Ins, Hlt } || W.stat in { Adr, Ins, Hlt };
 
 @set_stage(m, {
