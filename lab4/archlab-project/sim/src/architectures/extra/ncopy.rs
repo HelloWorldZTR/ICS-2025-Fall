@@ -1,4 +1,3 @@
-// @author 张庭瑞 2400017786
 //! Copy of pipe s4c
 
 
@@ -26,7 +25,7 @@ crate::define_stages! {
     // Although this pipeline register is named as "MemoryStage", it is actually
     // used in all of the rest stages.
     MemoryStage m {
-        stat: Stat = Stat::Aok, icode: u8 = NOP, ifun: u8 = 0, cnd: bool = false,
+        stat: Stat = Stat::Aok, icode: u8 = NOP, cnd: bool = false,
         valA: u64 = 0, valE: u64 = 0,
         dstE: u8 = RNONE, dstM: u8 = RNONE
     }
@@ -39,10 +38,6 @@ sim_macro::hcl! {
 #![stage_alias(F => f, D => d, E => e, M => m)]
 
 use Stat::*;
-
-u8 NE = 4;
-u8 GE = 5;
-u8 G = 6;
 
 :==============================: Fetch Stage :================================:
 // In the Fetch Stage, D.icode represents the instruction from the previous
@@ -64,8 +59,7 @@ u64 f_pc = [
     // valC is from Fetch Stage, thus the last cycle
     D.icode == CALL : D.valC;
     // Branch misprediction.  Use incremental PC
-    M.icode == JX && M.ifun in { NE, GE, G } && !M.cnd : M.valA;
-    M.icode == JX && !(M.ifun in { NE, GE, G }) && M.cnd : M.valA;
+    M.icode == JX && !M.cnd : M.valA;
     // Completion of RET instruction.  Use value from stack
     // valM is from DEMW stage, thus the current cycle
     M.icode == RET : m_valM;
@@ -108,7 +102,7 @@ bool need_valC = f_icode in { IRMOVQ, RMMOVQ, MRMOVQ, JX, CALL, IOPQ };
     old_pc: f_pc,
 });
 
-u64 next_pc = pc_inc.new_pc;
+u64 f_valP = pc_inc.new_pc;
 
 [u8; 9] align = imem.align;
 
@@ -123,16 +117,10 @@ u8 f_rb = ialign.rB;
 
 // Predict the next PC
 u64 f_pred_pc = [
-    // take the jump
-    f_icode == JX && f_ifun in { NE, GE, G }: f_valC;
-    // not NE Ge G, dont take the jump
+    // Always take the jump
+    f_icode == JX : f_valC;
     // Default: Use incremented PC
-    1: next_pc;
-];
-
-u64 f_valP = [
-    f_icode == JX && !(f_ifun in { NE, GE, G }) : f_valC;
-    1 : next_pc;
+    1: f_valP;
 ];
 
 @set_stage(f, {
@@ -272,7 +260,6 @@ ConditionCode cc = reg_cc.cc;
 });
 
 bool e_cnd = cond.cnd;
-// bool e_cnd  = reg_cc.cc.test(e_ifun);
 
 u8 e_dstE = [
     E.icode == CMOVX && !e_cnd : RNONE;
@@ -286,7 +273,6 @@ Stat e_stat = E.stat;
     stat: e_stat,
     dstM: e_dstM,
     icode: e_icode,
-    ifun: e_ifun,
     dstE: e_dstE,
     cnd: e_cnd,
     valE: e_valE,
@@ -296,7 +282,6 @@ Stat e_stat = E.stat;
 :==============================: Memory Stage :================================:
 
 u64 m_valE = M.valE;
-u8 m_ifun = M.ifun;
 
 // Set read control signal
 bool mem_read = M.icode in { MRMOVQ, POPQ, RET };
@@ -352,8 +337,7 @@ bool prog_term = m_stat in { Hlt, Adr, Ins };
 // If a branch misprediction is detected during the Execute stage, it means that
 // the instruction currently in the Decode stage is invalid. Therefore, the next
 // cycle’s Execute stage needs to insert a bubble.
-bool branch_mispred = (E.icode == JX && E.ifun in { NE, GE, G } && !e_cnd) || 
-                      (E.icode == JX && !(E.ifun in { NE, GE, G }) && e_cnd);
+bool branch_mispred = E.icode == JX && !e_cnd;
 
 // If a RET instruction is detected in either the Decode or Execute stage, then
 // the instruction in the current Fetch stage is invalid. Therefore, a bubble

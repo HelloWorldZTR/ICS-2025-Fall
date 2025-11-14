@@ -436,8 +436,7 @@ bool d_bubble =
     branch_mispred ||
     // Stalling at fetch while ret passes through pipeline
     // but not condition for a load/use hazard
-    !(load_use_hazard) &&
-      RET in {D.icode, E.icode, M.icode};
+      RET in {D.icode, E.icode, M.icode} && !d_stall;
 
 @set_stage(d, {
     stall: d_stall,

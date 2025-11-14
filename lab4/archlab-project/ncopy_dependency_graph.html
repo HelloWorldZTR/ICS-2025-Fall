@@ -24,6 +24,11 @@
       },
       "links": [
         {
+          "source": "align",
+          "target": "ialign-align",
+          "value": 1.0
+        },
+        {
           "source": "alu",
           "target": "alu-e",
           "value": 1.0
@@ -89,8 +94,8 @@
           "value": 1.0
         },
         {
-          "source": "branch_mispred",
-          "target": "m_bubble",
+          "source": "cc",
+          "target": "cond-cc",
           "value": 1.0
         },
         {
@@ -105,7 +110,7 @@
         },
         {
           "source": "cond-cnd",
-          "target": "m_cnd",
+          "target": "e_cnd",
           "value": 1.0
         },
         {
@@ -114,38 +119,13 @@
           "value": 1.0
         },
         {
-          "source": "d_rvalA",
-          "target": "d_valA",
-          "value": 1.0
-        },
-        {
-          "source": "d_rvalB",
-          "target": "d_valB",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcA",
-          "target": "d_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcA",
-          "target": "d_stall",
-          "value": 1.0
-        },
-        {
           "source": "d_srcA",
           "target": "d_valA",
           "value": 1.0
         },
         {
           "source": "d_srcA",
-          "target": "e_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcA",
-          "target": "f_stall",
+          "target": "load_use_harzard",
           "value": 1.0
         },
         {
@@ -155,32 +135,22 @@
         },
         {
           "source": "d_srcB",
-          "target": "d_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcB",
-          "target": "d_stall",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcB",
           "target": "d_valB",
           "value": 1.0
         },
         {
           "source": "d_srcB",
-          "target": "e_bubble",
-          "value": 1.0
-        },
-        {
-          "source": "d_srcB",
-          "target": "f_stall",
+          "target": "load_use_harzard",
           "value": 1.0
         },
         {
           "source": "d_srcB",
           "target": "reg_file-srcB",
+          "value": 1.0
+        },
+        {
+          "source": "d_stall",
+          "target": "d_bubble",
           "value": 1.0
         },
         {
@@ -224,6 +194,16 @@
           "value": 1.0
         },
         {
+          "source": "e_cnd",
+          "target": "branch_mispred",
+          "value": 1.0
+        },
+        {
+          "source": "e_cnd",
+          "target": "e_dstE",
+          "value": 1.0
+        },
+        {
           "source": "e_dstE",
           "target": "d_valA",
           "value": 1.0
@@ -231,6 +211,16 @@
         {
           "source": "e_dstE",
           "target": "d_valB",
+          "value": 1.0
+        },
+        {
+          "source": "e_ifun",
+          "target": "alufun",
+          "value": 1.0
+        },
+        {
+          "source": "e_ifun",
+          "target": "cond-condfun",
           "value": 1.0
         },
         {
@@ -249,18 +239,8 @@
           "value": 1.0
         },
         {
-          "source": "f_align",
-          "target": "ialign-align",
-          "value": 1.0
-        },
-        {
           "source": "f_icode",
           "target": "f_pred_pc",
-          "value": 1.0
-        },
-        {
-          "source": "f_icode",
-          "target": "f_stat",
           "value": 1.0
         },
         {
@@ -325,12 +305,12 @@
         },
         {
           "source": "ialign-rA",
-          "target": "f_rA",
+          "target": "f_ra",
           "value": 1.0
         },
         {
           "source": "ialign-rB",
-          "target": "f_rB",
+          "target": "f_rb",
           "value": 1.0
         },
         {
@@ -360,7 +340,7 @@
         },
         {
           "source": "imem-align",
-          "target": "f_align",
+          "target": "align",
           "value": 1.0
         },
         {
@@ -399,33 +379,48 @@
           "value": 1.0
         },
         {
-          "source": "m_cc",
-          "target": "cond-cc",
+          "source": "load_use_harzard",
+          "target": "d_stall",
           "value": 1.0
         },
         {
-          "source": "m_cnd",
-          "target": "branch_mispred",
+          "source": "load_use_harzard",
+          "target": "e_bubble",
           "value": 1.0
         },
         {
-          "source": "m_cnd",
-          "target": "m_dstE",
+          "source": "load_use_harzard",
+          "target": "f_stall",
           "value": 1.0
         },
         {
-          "source": "m_icode",
-          "target": "cond-condfun",
+          "source": "m_dstE",
+          "target": "reg_file-dstE",
+          "value": 1.0
+        },
+        {
+          "source": "m_dstM",
+          "target": "d_valA",
+          "value": 1.0
+        },
+        {
+          "source": "m_dstM",
+          "target": "d_valB",
+          "value": 1.0
+        },
+        {
+          "source": "m_dstM",
+          "target": "reg_file-dstM",
           "value": 1.0
         },
         {
           "source": "m_stat",
-          "target": "m_bubble",
+          "target": "prog_term",
           "value": 1.0
         },
         {
-          "source": "m_stat",
-          "target": "set_cc",
+          "source": "m_valE",
+          "target": "reg_file-valE",
           "value": 1.0
         },
         {
@@ -436,6 +431,16 @@
         {
           "source": "m_valM",
           "target": "d_valB",
+          "value": 1.0
+        },
+        {
+          "source": "m_valM",
+          "target": "f_pc",
+          "value": 1.0
+        },
+        {
+          "source": "m_valM",
+          "target": "reg_file-valM",
           "value": 1.0
         },
         {
@@ -496,11 +501,6 @@
         {
           "source": "pc_inc-old_pc",
           "target": "pc_inc",
-          "value": 1.0
-        },
-        {
-          "source": "prog_stat",
-          "target": "prog_term",
           "value": 1.0
         },
         {
@@ -570,12 +570,12 @@
         },
         {
           "source": "reg_file-valA",
-          "target": "d_rvalA",
+          "target": "d_valA",
           "value": 1.0
         },
         {
           "source": "reg_file-valB",
-          "target": "d_rvalB",
+          "target": "d_valB",
           "value": 1.0
         },
         {
@@ -589,32 +589,28 @@
           "value": 1.0
         },
         {
+          "source": "ret_harzard",
+          "target": "d_bubble",
+          "value": 1.0
+        },
+        {
+          "source": "ret_harzard",
+          "target": "f_stall",
+          "value": 1.0
+        },
+        {
           "source": "set_cc",
           "target": "reg_cc-set_cc",
-          "value": 1.0
-        },
-        {
-          "source": "w_dstE",
-          "target": "reg_file-dstE",
-          "value": 1.0
-        },
-        {
-          "source": "w_dstM",
-          "target": "reg_file-dstM",
-          "value": 1.0
-        },
-        {
-          "source": "w_valE",
-          "target": "reg_file-valE",
-          "value": 1.0
-        },
-        {
-          "source": "w_valM",
-          "target": "reg_file-valM",
           "value": 1.0
         }
       ],
       "data": [
+        {
+          "name": "align",
+          "itemStyle": {
+            "color": "rgba(255,0,0,0.5)"
+          }
+        },
         {
           "name": "alu",
           "itemStyle": {
@@ -730,18 +726,6 @@
           }
         },
         {
-          "name": "d_rvalA",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "d_rvalB",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
           "name": "d_srcA",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
@@ -779,6 +763,12 @@
         },
         {
           "name": "d_valC",
+          "itemStyle": {
+            "color": "rgba(255,0,0,0.5)"
+          }
+        },
+        {
+          "name": "d_valP",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -862,12 +852,6 @@
           }
         },
         {
-          "name": "e_stall",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
           "name": "e_stat",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
@@ -881,18 +865,6 @@
         },
         {
           "name": "e_valE",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_align",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "f_bubble",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -922,13 +894,13 @@
           }
         },
         {
-          "name": "f_rA",
+          "name": "f_ra",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
         },
         {
-          "name": "f_rB",
+          "name": "f_rb",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -1036,19 +1008,7 @@
           }
         },
         {
-          "name": "m_bubble",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_cc",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_cnd",
+          "name": "load_use_harzard",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -1061,18 +1021,6 @@
         },
         {
           "name": "m_dstM",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_icode",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "m_stall",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -1157,12 +1105,6 @@
         },
         {
           "name": "pc_inc-old_pc",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "prog_stat",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
@@ -1270,43 +1212,13 @@
           }
         },
         {
+          "name": "ret_harzard",
+          "itemStyle": {
+            "color": "rgba(255,0,0,0.5)"
+          }
+        },
+        {
           "name": "set_cc",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "w_bubble",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "w_dstE",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "w_dstM",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "w_stall",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "w_valE",
-          "itemStyle": {
-            "color": "rgba(255,0,0,0.5)"
-          }
-        },
-        {
-          "name": "w_valM",
           "itemStyle": {
             "color": "rgba(255,0,0,0.5)"
           }
