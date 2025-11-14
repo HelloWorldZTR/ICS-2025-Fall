@@ -220,6 +220,8 @@ eval(char *cmdline)
     int id, type; /* for parsing pid and jid*/
     struct job_t *job;
 
+    int nohup = 0; /* flag for nohup */
+
     /* Parse command line */
     bg = parseline(cmdline, &tok); 
 
@@ -239,22 +241,14 @@ eval(char *cmdline)
     
     /* If command is internal */
     if (tok.builtins != BUILTIN_NONE) {
-        /* Redirect input/output if necessary */
-        if(tok.infile) {
-            dup2(in_fd, STDIN_FILENO);
-            close(in_fd);
-        }
-        if(tok.outfile) {
-            dup2(out_fd, STDOUT_FILENO);
-            close(out_fd);
-        }
+        // no need to redirect io for built-in commands except jobs
         /* Execute built-in commands */
         switch (tok.builtins) {
             case BUILTIN_QUIT:
                 exit(0);
                 break;
             case BUILTIN_JOBS:
-                listjobs(job_list, STDOUT_FILENO);
+                listjobs(job_list, tok.outfile ? out_fd : STDOUT_FILENO);
                 break;
             case BUILTIN_BG:
                 type = getPIDorJID(tok, &id);
@@ -272,6 +266,7 @@ eval(char *cmdline)
                     resetio();
                     return;
                 }
+                printf("[%d] (%d) %s\n", job->jid, job->pid, job->cmdline);
                 job->state = BG;
                 kill(-job->pid, SIGCONT);
                 break;
@@ -307,30 +302,38 @@ eval(char *cmdline)
             case BUILTIN_KILL:
                 type = getPIDorJID(tok, &id);
                 
-                if (type == T_JID) { // JID
-                    job = getjobjid(job_list, id);
-                } else if (type == T_PID) { // PID
-                    job = getjobpid(job_list, id);
-                } else {
-                    resetio();
-                    return; // error
+                if (id > 0) {
+                    if (type == T_JID) { // JID
+                        job = getjobjid(job_list, id);
+                    } else if (type == T_PID) { // PID
+                        job = getjobpid(job_list, id);
+                    } else {
+                        resetio();
+                        return; // error
+                    }
+                    if (job == NULL) {
+                        printf("%s: No such job\n", tok.argv[1]);
+                        resetio();
+                        return;
+                    }
+                    kill(job->pid, SIGTERM); // kill default to kill -SIGTERM
+                } else { // is a process group
+                    job = getjobjid(job_list, -id);
+                    if (job == NULL) {
+                        printf("%s: No such process group\n", tok.argv[1]);
+                        resetio();
+                        return;
+                    }
+                    kill(-job->pid, SIGTERM); // kill a process group
                 }
-                if (job == NULL) {
-                    printf("%s: No such job\n", tok.argv[1]);
-                    resetio();
-                    return;
-                }
-                job->state = BG;
-                kill(-job->pid, SIGKILL);
                 break;
             case BUILTIN_NOHUP:
-                // TODO:
+                nohup = 1;
                 break;
             default:
                 break;
         }
-        resetio();
-        return;
+        if (!nohup) return; // if nohup, continue to execute the command
     }
     /* If command is external */
 
@@ -368,6 +371,17 @@ eval(char *cmdline)
         }
 
         sigprocmask(SIG_SETMASK, &old_mask, NULL); // Unblock SIGCHLD, SIGINT, SIGTSTP
+        if (nohup) {
+            // Ignore SIGHUP
+            sigemptyset(&mask_blk_sigchld);
+            sigaddset(&mask_blk_sigchld, SIGHUP);
+            // Change arg list to remove nohup
+            for (int i = 0; i < tok.argc - 1; i++) {
+                tok.argv[i] = tok.argv[i + 1];
+            }
+            tok.argv[tok.argc - 1] = NULL;
+            tok.argc--;
+        }
         // Execute the command
         if (execve(tok.argv[0], tok.argv, environ) < 0) {
             printf("%s: Command not found\n", tok.argv[0]);

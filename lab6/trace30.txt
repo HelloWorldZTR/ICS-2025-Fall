@@ -10,6 +10,8 @@ WAIT
 SIGNAL
 
 kill %-1
+jobs
+NEXT
 WAIT
 SIGNAL
 
