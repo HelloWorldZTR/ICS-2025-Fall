@@ -22,6 +22,16 @@
 #define MAXJOBS      16   /* max jobs at any point in time */
 #define MAXJID    1<<16   /* max job ID */
 
+#define T_INVALID -1
+#define T_PID     1
+#define T_JID     0
+
+#define resetio() \
+    do { \
+        dup2(STDIN_FILENO, 0); \
+        dup2(STDOUT_FILENO, 1); \
+    } while(0)
+
 /* Job states */
 #define UNDEF         0   /* undefined */
 #define FG            1   /* running in foreground */
@@ -104,11 +114,12 @@ ssize_t sio_puts(char s[]);
 ssize_t sio_putl(long v);
 ssize_t sio_put(const char *fmt, ...);
 void sio_error(char s[]);
-int Open(const char *filename, int flags, mode_t mode);
 
 typedef void handler_t(int);
 handler_t *Signal(int signum, handler_t *handler);
 
+int Open(const char *filename, int flags, mode_t mode);
+int getPIDorJID(struct cmdline_tokens tok, pid_t *id);
 
 /*
  * main - The shell's main routine 
@@ -204,6 +215,10 @@ eval(char *cmdline)
     struct cmdline_tokens tok;
     int pid;
     int in_fd = -1, out_fd = -1;
+    sigset_t mask_blk_sigchld, old_mask;
+
+    int id, type; /* for parsing pid and jid*/
+    struct job_t *job;
 
     /* Parse command line */
     bg = parseline(cmdline, &tok); 
@@ -242,13 +257,71 @@ eval(char *cmdline)
                 listjobs(job_list, STDOUT_FILENO);
                 break;
             case BUILTIN_BG:
-                // TODO:
+                type = getPIDorJID(tok, &id);
+                
+                if (type == T_JID) { // JID
+                    job = getjobjid(job_list, id);
+                } else if (type == T_PID) { // PID
+                    job = getjobpid(job_list, id);
+                } else {
+                    resetio();
+                    return; // error
+                }
+                if (job == NULL) {
+                    printf("%s: No such job\n", tok.argv[1]);
+                    resetio();
+                    return;
+                }
+                job->state = BG;
+                kill(-job->pid, SIGCONT);
                 break;
             case BUILTIN_FG:
-                // TODO:
+                type = getPIDorJID(tok, &id);
+                
+                if (type == T_JID) { // JID
+                    job = getjobjid(job_list, id);
+                } else if (type == T_PID) { // PID
+                    job = getjobpid(job_list, id);
+                } else {
+                    resetio();
+                    return; // error
+                }
+                if (job == NULL) {
+                    printf("%s: No such job\n", tok.argv[1]);
+                    resetio();
+                    return;
+                }
+                job->state = FG;
+                pid = job->pid; // fg pid
+                /* Block signals before continuing to prevent deadlock */
+                sigemptyset(&mask_blk_sigchld);
+                sigaddset(&mask_blk_sigchld, SIGCHLD);
+                sigaddset(&mask_blk_sigchld, SIGINT);
+                sigaddset(&mask_blk_sigchld, SIGTSTP);
+                sigprocmask(SIG_BLOCK, &mask_blk_sigchld, &old_mask);
+                kill(-job->pid, SIGCONT);
+                while (fgpid(job_list) == pid) // Wait for foreground job to terminate
+                    sigsuspend(&old_mask);
+                sigprocmask(SIG_SETMASK, &old_mask, NULL); // Unblock signals
                 break;
             case BUILTIN_KILL:
-                // TODO:
+                type = getPIDorJID(tok, &id);
+                
+                if (type == T_JID) { // JID
+                    job = getjobjid(job_list, id);
+                } else if (type == T_PID) { // PID
+                    job = getjobpid(job_list, id);
+                } else {
+                    resetio();
+                    return; // error
+                }
+                if (job == NULL) {
+                    printf("%s: No such job\n", tok.argv[1]);
+                    resetio();
+                    return;
+                }
+                job->state = BG;
+                kill(-job->pid, SIGKILL);
                 break;
             case BUILTIN_NOHUP:
                 // TODO:
@@ -256,10 +329,20 @@ eval(char *cmdline)
             default:
                 break;
         }
+        resetio();
         return;
     }
     /* If command is external */
+
+
+    sigemptyset(&mask_blk_sigchld);
+    sigaddset(&mask_blk_sigchld, SIGCHLD);
+    sigaddset(&mask_blk_sigchld, SIGINT);
+    sigaddset(&mask_blk_sigchld, SIGTSTP);
+    sigprocmask(SIG_BLOCK, &mask_blk_sigchld, &old_mask);
+
     pid = fork();
+    
     if (pid < 0) {
         app_error("Fork error");
     }
@@ -273,35 +356,42 @@ eval(char *cmdline)
             dup2(out_fd, STDOUT_FILENO);
             close(out_fd);
         }
-        if (bg && !tok.outfile) {
-            // Redirect output to /dev/null for background jobs without outfile
-            int devnull = Open("/dev/null", O_WRONLY, 0);
-            dup2(devnull, STDOUT_FILENO);
-            close(devnull);
-        }
+        // if (bg && !tok.outfile) {
+        //     // Redirect output to /dev/null for background jobs without outfile
+        //     int devnull = Open("/dev/null", O_WRONLY, 0);
+        //     dup2(devnull, STDOUT_FILENO);
+        //     close(devnull);
+        // }
         // Set new process group with pgid = pid
         if (setpgid(0, 0) < 0) {
             app_error("setpgid error");
         }
+
+        sigprocmask(SIG_SETMASK, &old_mask, NULL); // Unblock SIGCHLD, SIGINT, SIGTSTP
         // Execute the command
         if (execve(tok.argv[0], tok.argv, environ) < 0) {
             printf("%s: Command not found\n", tok.argv[0]);
             exit(1);
         }
+        // Should not reach here
     }
     else { // Parent 
         addjob(job_list, pid, bg ? BG : FG, cmdline);
+
         if (!bg) { // Foreground
-            // Wait for foreground job to terminate
-            while(waitpid(pid, NULL, WUNTRACED) > 0)
-                ;
+            while (fgpid(job_list) == pid) { // Wait for foreground job to terminate
+                sigsuspend(&old_mask);
+            }
+            sigprocmask(SIG_SETMASK, &old_mask, NULL); // Unblock SIGCHLD, SIGINT, SIGTSTP
         }
         else { // Background
+            sigprocmask(SIG_SETMASK, &old_mask, NULL); // Unblock SIGCHLD, SIGINT, SIGTSTP
             // Print background job info
             printf("[%d] (%d) %s\n", pid2jid(pid), pid, cmdline);
         }
     }
 
+    resetio();
     return;
 }
 
@@ -472,7 +562,39 @@ parseline(const char *cmdline, struct cmdline_tokens *tok)
 void 
 sigchld_handler(int sig) 
 {
-    return;
+    sigset_t mask_all, prev_all;
+    int i;
+
+    // disable all signals
+    sigfillset(&mask_all);
+    sigprocmask(SIG_BLOCK, &mask_all, &prev_all);
+
+    for (i = 0; i < MAXJOBS; i++) {
+        if (job_list[i].state == BG || job_list[i].state == FG) { // running
+            pid_t pid;
+            int status;
+            // Use WNOHANG and WUNTRACED to reap terminated or stopped children
+            while ((pid = waitpid(job_list[i].pid, &status, WNOHANG | WUNTRACED)) > 0) {
+                if (WIFEXITED(status)) {
+                    // Child terminated normally
+                    deletejob(job_list, pid);
+                } else if (WIFSIGNALED(status)) {
+                    // Child terminated due to uncaught signal
+                    sio_put("Job [%d] (%d) terminated by signal %d\n", 
+                            pid2jid(pid), pid, WTERMSIG(status));
+                    deletejob(job_list, pid);
+                } else if (WIFSTOPPED(status)) {
+                    // Child stopped by signal
+                    sio_put("Job [%d] (%d) stopped by signal %d\n", 
+                            pid2jid(pid), pid, WSTOPSIG(status));
+                    getjobpid(job_list, pid)->state = ST;
+                }
+            }
+        }
+    }
+
+    // recover signals
+    sigprocmask(SIG_SETMASK, &prev_all, NULL);
 }
 
 /* 
@@ -483,7 +605,15 @@ sigchld_handler(int sig)
 void 
 sigint_handler(int sig) 
 {
-    return;
+    int i;
+    for (i = 0; i < MAXJOBS; i++) {
+        if (job_list[i].state == FG) {
+            if (kill(-job_list[i].pid, SIGINT) < 0) {
+                app_error("kill (SIGINT) error");
+            }
+            return;
+        }
+    }
 }
 
 /*
@@ -494,7 +624,15 @@ sigint_handler(int sig)
 void 
 sigtstp_handler(int sig) 
 {
-    return;
+    int i;
+    for (i = 0; i < MAXJOBS; i++) {
+        if (job_list[i].state == FG) {
+            if (kill(-job_list[i].pid, SIGTSTP) < 0) {
+                app_error("kill (SIGTSTP) error");
+            }
+            return;
+        }
+    }
 }
 
 /*
@@ -900,4 +1038,32 @@ int Open(const char *filename, int flags, mode_t mode)
         exit(1);
     }
     return fd;
+}
+
+/**
+ * Safely get PID or JID from command line tokens
+ * Returns:
+ * 0 if JID was provided
+ * 1 if PID was provided
+ * -1 on error (invalid format)
+ */
+int getPIDorJID(struct cmdline_tokens tok, pid_t *id) 
+{
+    if (tok.argc < 2) {
+        printf("bg/fg command requires PID or %%jobid argument\n");
+        return -1;
+    }
+
+    if (tok.argv[1][0] == '%') { // JID
+        *id = atoi(&tok.argv[1][1]);
+        return 0;
+    } else if (isdigit(tok.argv[1][0])) { // PID
+        *id = atoi(tok.argv[1]);
+        return 1;
+    } else {
+        printf("bg/fg: argument must be a PID or %%jobid\n");
+        return -1;
+    }
+
+    return -1; // should not reach here
 }

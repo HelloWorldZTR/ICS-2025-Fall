@@ -2,6 +2,7 @@
     "files.associations": {
         "stdlib.h": "c",
         "cachelab.h": "c",
-        "assert.h": "c"
+        "assert.h": "c",
+        "signal.h": "c"
     }
 }
