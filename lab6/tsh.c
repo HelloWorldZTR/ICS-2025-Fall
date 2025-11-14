@@ -342,6 +342,7 @@ eval(char *cmdline)
     sigaddset(&mask_blk_sigchld, SIGCHLD);
     sigaddset(&mask_blk_sigchld, SIGINT);
     sigaddset(&mask_blk_sigchld, SIGTSTP);
+    sigaddset(&mask_blk_sigchld, SIGHUP);
     sigprocmask(SIG_BLOCK, &mask_blk_sigchld, &old_mask);
 
     pid = fork();
@@ -375,6 +376,7 @@ eval(char *cmdline)
             // Ignore SIGHUP
             sigemptyset(&mask_blk_sigchld);
             sigaddset(&mask_blk_sigchld, SIGHUP);
+            sigprocmask(SIG_BLOCK, &mask_blk_sigchld, NULL);
             // Change arg list to remove nohup
             for (int i = 0; i < tok.argc - 1; i++) {
                 tok.argv[i] = tok.argv[i + 1];
