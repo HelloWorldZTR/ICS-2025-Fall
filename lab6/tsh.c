@@ -104,6 +104,7 @@ ssize_t sio_puts(char s[]);
 ssize_t sio_putl(long v);
 ssize_t sio_put(const char *fmt, ...);
 void sio_error(char s[]);
+int Open(const char *filename, int flags, mode_t mode);
 
 typedef void handler_t(int);
 handler_t *Signal(int signum, handler_t *handler);
@@ -201,6 +202,8 @@ eval(char *cmdline)
 {
     int bg;              /* should the job run in bg or fg? */
     struct cmdline_tokens tok;
+    int pid;
+    int in_fd = -1, out_fd = -1;
 
     /* Parse command line */
     bg = parseline(cmdline, &tok); 
@@ -209,6 +212,95 @@ eval(char *cmdline)
         return;
     if (tok.argv[0] == NULL) /* ignore empty lines */
         return;
+    
+    /* Attempt to open files*/
+    if (tok.infile) {
+        in_fd = Open(tok.infile, O_RDONLY, 0);
+    }
+    if (tok.outfile) {
+        // Attemp to open/create outfile with rw-r--r-- permissions
+        out_fd = Open(tok.outfile, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    }
+    
+    /* If command is internal */
+    if (tok.builtins != BUILTIN_NONE) {
+        /* Redirect input/output if necessary */
+        if(tok.infile) {
+            dup2(in_fd, STDIN_FILENO);
+            close(in_fd);
+        }
+        if(tok.outfile) {
+            dup2(out_fd, STDOUT_FILENO);
+            close(out_fd);
+        }
+        /* Execute built-in commands */
+        switch (tok.builtins) {
+            case BUILTIN_QUIT:
+                exit(0);
+                break;
+            case BUILTIN_JOBS:
+                listjobs(job_list, STDOUT_FILENO);
+                break;
+            case BUILTIN_BG:
+                // TODO:
+                break;
+            case BUILTIN_FG:
+                // TODO:
+                break;
+            case BUILTIN_KILL:
+                // TODO:
+                break;
+            case BUILTIN_NOHUP:
+                // TODO:
+                break;
+            default:
+                break;
+        }
+        return;
+    }
+    /* If command is external */
+    pid = fork();
+    if (pid < 0) {
+        app_error("Fork error");
+    }
+    else if (pid == 0) { // Child 
+        /* Redirect input/output if necessary */
+        if (tok.infile) {
+            dup2(in_fd, STDIN_FILENO);
+            close(in_fd);
+        }
+        if (tok.outfile) {
+            dup2(out_fd, STDOUT_FILENO);
+            close(out_fd);
+        }
+        if (bg && !tok.outfile) {
+            // Redirect output to /dev/null for background jobs without outfile
+            int devnull = Open("/dev/null", O_WRONLY, 0);
+            dup2(devnull, STDOUT_FILENO);
+            close(devnull);
+        }
+        // Set new process group with pgid = pid
+        if (setpgid(0, 0) < 0) {
+            app_error("setpgid error");
+        }
+        // Execute the command
+        if (execve(tok.argv[0], tok.argv, environ) < 0) {
+            printf("%s: Command not found\n", tok.argv[0]);
+            exit(1);
+        }
+    }
+    else { // Parent 
+        addjob(job_list, pid, bg ? BG : FG, cmdline);
+        if (!bg) { // Foreground
+            // Wait for foreground job to terminate
+            while(waitpid(pid, NULL, WUNTRACED) > 0)
+                ;
+        }
+        else { // Background
+            // Print background job info
+            printf("[%d] (%d) %s\n", pid2jid(pid), pid, cmdline);
+        }
+    }
 
     return;
 }
@@ -795,3 +887,17 @@ handler_t
     return (old_action.sa_handler);
 }
 
+/**
+ * Open - wrapper for open function
+ * prints an error message and exits if open fails
+ */
+int Open(const char *filename, int flags, mode_t mode)
+{
+    int fd;
+
+    if ((fd = open(filename, flags, mode)) < 0) {
+        printf("Error: %s No such file or directory\n", filename);
+        exit(1);
+    }
+    return fd;
+}
