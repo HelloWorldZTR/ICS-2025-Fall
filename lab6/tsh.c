@@ -1,7 +1,16 @@
-/* 
+/**
  * tsh - A tiny shell program with job control
  * 
- * <Put your name and login ID here>
+ * Keep a job list to manage fg and bg jobs.
+ * Signal is handled by signal handlers, which redirect signals to foreground jobs.
+ * Child process reaping is done in the SIGCHLD handler to prevent zombie processes.
+ * which is not a standard practice but simplifies the design of the shell.
+ * 
+ * The shell will block signals when forking child processes and adding jobs to the job list
+ * to prevent race conditions. 
+ * 
+ * @author
+ * 张庭瑞 2400017786
  */
 #include <assert.h>
 #include <stdio.h>
@@ -360,12 +369,6 @@ eval(char *cmdline)
             dup2(out_fd, STDOUT_FILENO);
             close(out_fd);
         }
-        // if (bg && !tok.outfile) {
-        //     // Redirect output to /dev/null for background jobs without outfile
-        //     int devnull = Open("/dev/null", O_WRONLY, 0);
-        //     dup2(devnull, STDOUT_FILENO);
-        //     close(devnull);
-        // }
         // Set new process group with pgid = pid
         if (setpgid(0, 0) < 0) {
             app_error("setpgid error");
@@ -595,7 +598,7 @@ sigchld_handler(int sig)
                     // Child terminated normally
                     deletejob(job_list, pid);
                 } else if (WIFSIGNALED(status)) {
-                    // Child terminated due to uncaught signal
+                    // Child terminated by signal
                     sio_put("Job [%d] (%d) terminated by signal %d\n", 
                             pid2jid(pid), pid, WTERMSIG(status));
                     deletejob(job_list, pid);
@@ -603,6 +606,7 @@ sigchld_handler(int sig)
                     // Child stopped by signal
                     sio_put("Job [%d] (%d) stopped by signal %d\n", 
                             pid2jid(pid), pid, WSTOPSIG(status));
+                    // don't delete them, they are just stopped
                     getjobpid(job_list, pid)->state = ST;
                 }
             }
