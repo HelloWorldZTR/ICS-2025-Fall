@@ -1,30 +1,39 @@
 /*
  * mm.c
- * 
- * This malloc implementation uses seperate policies for small and large objects.
- * for object smaller than 4kB, use bin + run to manage them, which will improve
- * latency.
- * bins contain objects of size [8, 16, 24 ..., 4096]
- * for object larger than 4kB, use segregated free lists to manage them
- * chunks contain objects of size [4096, 8192, 12288, ...] where each chunk size doubles
+ *
+ * struct for block:
+ * - header 8B    (packed size and allocated bit)
+ * - prev   8B    (pointer to the previous free block)
+ * - next   8B    (pointer to the next free block)
+ * - data   (size Bytes, round to 8)
+ * - footer 8B    (packed size and allocated bit)
  */
 #include <assert.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
-#include "mm.h"
 #include "memlib.h"
+#include "mm.h"
 
 /* If you want debugging output, use the following macro.  When you hand
  * in, remove the #define DEBUG line. */
 #define DEBUG
 #ifdef DEBUG
-# define dbg_printf(...) printf(__VA_ARGS__)
+#define dbg_printf(...) printf(__VA_ARGS__)
 #else
-# define dbg_printf(...)
+#define dbg_printf(...)
 #endif
+
+#define ASSERT(cond, msg)                                                      \
+  do {                                                                         \
+    if (!(cond)) {                                                             \
+      fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, msg);                 \
+      errno = 1;                                                               \
+    }                                                                          \
+  } while (0)
 
 /* do not change the following! */
 #ifdef DRIVER
@@ -35,404 +44,691 @@
 #define calloc mm_calloc
 #endif /* def DRIVER */
 
-/* Define constants */
 /* single word (4) or double word (8) alignment */
 #define ALIGNMENT 8
-/* rounds up size to the nearest multiple of ALIGNMENT */
-#define ALIGN_SIZE(size) (((size) + (ALIGNMENT-1)) & ~(ALIGNMENT-1))
-/* rounds up pointer to the nearest multiple of ALIGNMENT */
-#define ALIGN_PTR(p) ((void*)(((size_t)(p) + (ALIGNMENT-1)) & ~(ALIGNMENT-1)))
-/* object below size threshold will be handled using bins*/
-#define SIZE_THRESHOLD (1 << 12) 
-#define BIN_CNT (SIZE_THRESHOLD / ALIGNMENT)
-/* a run is the size of 1 page (4kB)*/
-#define RUN_SIZE (1 << 12)
-/* a page is 4kB */
-#define PAGE_SIZE (1 << 12)
 
-typedef size_t word_t;
-typedef __uint8_t byte_t;
-typedef __uint32_t uint32_t;
-typedef __uint64_t uint64_t;
+/* rounds up to the nearest multiple of ALIGNMENT */
+#define ALIGN(p) (((size_t)(p) + (ALIGNMENT - 1)) & ~0x7)
+#define ROUND(size) ((size + (ALIGNMENT - 1)) & ~(ALIGNMENT - 1))
+
+/* define types for convenience */
 typedef int bool;
 #define true 1
 #define false 0
+typedef size_t packed_t;
+int errno;
 
-/* Helper struct and functions */
+/* pack size and allocated*/
+#define PACK(size, alloc) ((size) | (alloc))
+#define GET_SIZE(packed) (size_t)(packed & ~0x7)
+#define GET_ALLOC(packed) (bool)(packed & 0x1)
+/* Offset from start of block_t to data field */
+#define DATA_OFFSET offsetof(block_t, data)
 
-#define TSMALL 1
-#define TLARGE 2
-#define TEMPTY 0
+/* p is a block_t pointer, get the header of the current block, which is
+ * meaningless */
+#define GET_HEADER_P(p) (&(p->header))
+/* p is a block_t pointer, get the footer of the current block */
+#define GET_FOOTER_P(p) ((packed_t *)((char *)p->data + GET_SIZE(p->header)))
+/* assuming p is a block_t pointer, get the footer of the previous block */
+#define GET_LFOOTER_P(p) ((packed_t *)((char *)p - sizeof(packed_t)))
+/* assuming p is a block_t pointer, get the header of the previous block */
+#define GET_LHEADER_P(p)                                                       \
+  ((block_t *)((char *)p - DATA_OFFSET - GET_SIZE(*GET_LFOOTER_P(p)) -         \
+               sizeof(packed_t)))
+/* assuming p is a block_t pointer, get the header of the next block */
+#define GET_RHEADER_P(p)                                                       \
+  ((block_t *)((char *)p + DATA_OFFSET + GET_SIZE(p->header) +                 \
+               sizeof(packed_t)))
+/* get block header by data pointer*/
+#define GET_HEADER_P_BY_DATA(p) ((block_t *)((char *)p - DATA_OFFSET))
 
-typedef uint32_t page_type_t;
+/* struct for a free block in free chain */
+typedef struct block_t {
+  packed_t header;
+  struct block_t *next;
+  struct block_t *prev;
+  void *data[0];
+} block_t;
 
-typedef struct page_types_t {
-    uint32_t block_size;
-    page_type_t type;
-} page_types_t;
-
-typedef struct l3_pagetable_t {
-    page_types_t types[512]; // is this small or large object?
-} l3_pagetable_t;
-
-typedef struct l2_pagetable_t {
-    l3_pagetable_t* pages[512];
-} l2_pagetable_t;
-
-typedef struct l1_pagetable_t {
-    l2_pagetable_t* pages[512];
-} l1_pagetable_t;
-
-l1_pagetable_t* l1_pagetable = NULL;
-
-/*
-Get the page type from a pointer
-ptr = l1_pagetable + offset
-offset in [0, 2^32-1]
-VPN = offset >> 12
-
-4+8+8 = 20 bits
-l3_index = VPN & 0xFF
-l2_index = VPN >> 8 & 0xFF
-l1_index = VPN >> 16 & 0xF
-*/
-static inline page_types_t getPtrType(void* ptr) {
-    size_t offset = (size_t)((char*)ptr - (char*)mem_heap_lo());
-    size_t VPN = offset >> 12;
-    size_t l3_index = VPN & 0x1FF;  // 9 bits: 0-511
-    size_t l2_index = (VPN >> 9) & 0x1FF;  // 9 bits: 0-511
-    size_t l1_index = (VPN >> 18) & 0x1FF;  // 9 bits: 0-511
-    if (l1_pagetable->pages[l1_index] == NULL || 
-        l1_pagetable->pages[l1_index]->pages[l2_index] == NULL) {
-        page_types_t empty = {0, TEMPTY};
-        return empty;
-    }
-    return l1_pagetable->pages[l1_index]->pages[l2_index]->types[l3_index];
-}
-
-
-/* 
-Allocate a page of memory and mark what its for 
-*/
-static void* allocate_page(uint32_t page_type, uint32_t block_size) {
-    void* ptr = mem_sbrk(PAGE_SIZE);
-    if (ptr == (void*)(-1)) {
-        return NULL; // unable to allocate memory
-    }
-    memset(ptr, 0, PAGE_SIZE);
-    size_t offset = (size_t)((char*)ptr - (char*)mem_heap_lo());
-    size_t VPN = offset >> 12;
-    size_t l3_index = VPN & 0x1FF;  // 9 bits: 0-511
-    size_t l2_index = (VPN >> 9) & 0x1FF;  // 9 bits: 0-511
-    size_t l1_index = (VPN >> 18) & 0x1FF;  // 9 bits: 0-511
-    
-    // Allocate l2_pagetable if needed
-    if (l1_pagetable->pages[l1_index] == NULL) {
-        l2_pagetable_t* l2_pagetable = (l2_pagetable_t*)mem_sbrk(PAGE_SIZE);
-        if (l2_pagetable == (l2_pagetable_t*)(-1)) {
-            return NULL; // unable to allocate memory
-        }
-        memset(l2_pagetable, 0, PAGE_SIZE);
-        l1_pagetable->pages[l1_index] = l2_pagetable;
-    }
-    l2_pagetable_t* l2_pagetable = l1_pagetable->pages[l1_index];
-    
-    // Allocate l3_pagetable if needed
-    if (l2_pagetable->pages[l2_index] == NULL) {
-        l3_pagetable_t* l3_pagetable = (l3_pagetable_t*)mem_sbrk(PAGE_SIZE);
-        if (l3_pagetable == (l3_pagetable_t*)(-1)) {
-            return NULL; // unable to allocate memory
-        }
-        memset(l3_pagetable, 0, PAGE_SIZE);
-        l2_pagetable->pages[l2_index] = l3_pagetable;
-    }
-    l3_pagetable_t* l3_pagetable = l2_pagetable->pages[l2_index];
-    
-    l3_pagetable->types[l3_index].type = page_type;
-    l3_pagetable->types[l3_index].block_size = block_size;
-    return ptr;
-}
-
-/* Run manages a list of slots, which contains blocks of a certain size*/
-typedef struct run_t {
-    struct run_t *next;
-    uint32_t slots_cnt;
-    uint32_t slots_used;
-    size_t block_size;
-    byte_t* bitmap;
-    void* slots;
-} run_t;
-
-/* 
-A bin contains blocks of a certain size,
-and manage them using runs.
-*/
+/* struct for a bin, which contains blocks that are of a particular size range
+ */
 typedef struct bin_t {
-    size_t block_size;
-    struct run_t *runs;
+  size_t block_size_min; // Use for debugging, we can remove it
+  size_t block_size_max;
+  struct block_t *head;
 } bin_t;
 
-static bin_t* bins; 
+/* global bins array pointer, stored at the beginning of the heap */
+static bin_t *bins;
 
-/* Helper functions for runs */
-/* Check if a run is empty */
-static inline bool isRunEmpty(run_t* run) {
-    for (uint32_t i = 0; i < run->slots_cnt; i += 8) {
-        byte_t tmp = run->bitmap[i >> 3];
-        if (tmp != 0)
-            return false;
-    }
-    return true;
-}
-/* Check if a slot is empty */
-static inline bool isSlotEmpty(run_t* run, size_t nth) {
-    byte_t tmp = run->bitmap[nth >> 3];
-    return (tmp & (1 << (nth & 7))) == 0;
-}
-/* Change a slot to be used or free */
-static inline void modifySlot(run_t* run, size_t nth, size_t value) {
-    if (value) // set n-th slot to be used
-        run->bitmap[nth >> 3] |= (1 << (nth & 7));
-    else // set n-th slot to be free
-        run->bitmap[nth >> 3] &= ~(1 << (nth & 7));
-}
+/* bins are classified using the size rules*/
+static const size_t size_classes[] = {
+    8,         16,  24,  32,  40,  48,  56,  64,  80,  96,  112, 128,
+    160,       192, 224, 256, 320, 384, 448, 512, 640, 768, 896, 1024,
+    (size_t)-1 // for objects larger than 1024, use the same bin
+};
+static const int NUM_CLASSES = sizeof(size_classes) / sizeof(size_classes[0]);
+static const size_t MIN_BLOCK_SIZE = 32;
 
-/* Get the pointer to the n-th slot */
-static inline void* getSlotPtr(run_t* run, size_t nth, size_t block_size) {
-    return (void*)((byte_t*)run->slots + nth * block_size);
-}
+/* sentinel blocks are used to mark the beginning and end of the block arena */
+static block_t *sentinel_block1;
+static block_t *sentinel_block2;
 
-/* Get the run_t pointer from object pointer */
-static inline run_t* getRunFromPtr(void* ptr) {
-    return (run_t*)((size_t)ptr & ~(RUN_SIZE - 1));
-}
+/* bin helper functions */
+static int setup_bins();
+static size_t bin_index(size_t size);
+static void insert_block(block_t *block, size_t bin_idx);
+static void remove_block(block_t *block, size_t bin_idx);
+static block_t *split_block(block_t *old_block, size_t size);
+static void coalesce(block_t *block_ptr);
 
+/* debug structs and functions */
+typedef struct dbg_blk_entry {
+  block_t *blk_ptr;
+  bool is_free;
+  bool is_used;
+} dbg_blk_entry;
 
-/* Initialize a run */
-static void initializeRun(run_t* run, size_t block_size) {
-    // Calculate bitmap size: need 1 bit per slot, rounded up to bytes
-    uint32_t max_slots = RUN_SIZE / block_size;
-    uint32_t bitmapSize = (max_slots + 7) / 8;  // Round up to bytes
-    bitmapSize = ALIGN_SIZE(bitmapSize);  // Align bitmap size to 8 bytes
+enum dbg_op_type { ALLOC, FREE, REALLOC };
 
-    // Place bitmap right after run_t structure, aligned
-    run->bitmap = ALIGN_PTR((byte_t*)run + sizeof(run_t));
-    memset(run->bitmap, 0, bitmapSize); // initialize bitmap
-    
-    // Place slots after bitmap, aligned to 8 bytes
-    run->slots = ALIGN_PTR((byte_t*)run->bitmap + bitmapSize);
-    
-    // Calculate how many slots fit in remaining space
-    size_t slots_start = (size_t)run->slots - (size_t)run;
-    run->slots_cnt = (RUN_SIZE - slots_start) / block_size;
-    run->slots_used = 0;
-    run->block_size = block_size;
-}
+typedef struct dbg_trace_entry {
+	int lineno;
+	enum dbg_op_type op;
+	size_t size;
+	void *ptr;
+	block_t *blk_ptr;
+} dbg_trace_entry;
 
-static run_t* freed_runs_head = NULL; // head of the linked list of freed runs
+#ifdef DEBUG
+static dbg_blk_entry dbg_blk_entries[4096];
+static size_t dbg_blk_entries_idx = 0;
+static dbg_trace_entry dbg_trace_entries[8192];
+static size_t dbg_trace_entries_idx = 0;
+#endif
 
-/* Add a run to the linked list of freed runs */
-static void addRunToFreedList(run_t* run) {
-    run->next = freed_runs_head;
-    freed_runs_head = run;
-}
-
-/* Remove a run from the head of the linked list of freed runs */
-static run_t* removeRunFromFreedList() {
-    if (freed_runs_head == NULL)
-        return NULL;
-    run_t* run = freed_runs_head;
-    freed_runs_head = run->next;
-    return run;
-}
-
-/* Remove a run from a bin's run list */
-static void removeRunFromBin(bin_t* bin, run_t* run) {
-    if (bin->runs == run) {
-        // Run is at the head
-        bin->runs = run->next;
-    } else {
-        // Find the run in the list
-        run_t* curr = bin->runs;
-        while (curr != NULL && curr->next != run) {
-            curr = curr->next;
-        }
-        if (curr != NULL) {
-            curr->next = run->next;
-        }
-    }
-    run->next = NULL;  // Clear the next pointer
-}
-
-/* Place an object in a bin */
-static void* placeInBin(bin_t* bin) {
-    run_t* curr_run = bin->runs;
-    // search for a free slot in existing runs
-    while (curr_run != NULL) {
-        for (size_t i = 0; i < curr_run->slots_cnt; i++) {
-            if (isSlotEmpty(curr_run, i)) {
-                // found a free slot
-                modifySlot(curr_run, i, 1); // mark as used
-                curr_run->slots_used++;
-                return getSlotPtr(curr_run, i, bin->block_size);
-            }
-        }
-        curr_run = curr_run->next;
-    }
-    // no free slot found, need to allocate a new page for run
-    run_t* run = removeRunFromFreedList();
-    if (run == NULL) {
-        void* run_mem = allocate_page(TSMALL, bin->block_size);
-        if (run_mem == NULL)  
-            return NULL;
-        run = (run_t*)run_mem;
-    }
-    initializeRun(run, bin->block_size);
-    // insert new run at the beginning of the bin's run list
-    run->next = bin->runs;
-    bin->runs = run;
-    // allocate the first slot in the new run
-    modifySlot(run, 0, 1); // mark as used
-    run->slots_used++;
-    return run->slots;
-}
-/* End helper functions for runs */
-
-static inline size_t roundToPage(size_t size) {
-    return (size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
-}
+static void dbg_register_block(block_t *block, bool is_free);
+static void dbg_unregister_block(block_t *block);
+static void dbg_log_trace(int lineno, enum dbg_op_type op, size_t size, void *ptr, block_t *blk_ptr);
+static void dump_heap(int lineno);
 
 /*
  * Initialize: return -1 on error, 0 on success.
  */
 int mm_init(void) {
-    // step -1. reset the heap
-    mem_reset_brk();
-    // step 0. initialize page tables
-    l1_pagetable = mem_sbrk(PAGE_SIZE);
-    if (l1_pagetable == (l1_pagetable_t*)(-1)) {
-        return -1; // unable to allocate memory
-    }
-    memset(l1_pagetable, 0, PAGE_SIZE);
+  /* reset heap size */
+  mem_reset_brk();
 
-    // step 1. initialize bins
-    // allocate array bin_t bins[BIN_CNT] 
-    size_t bin_size = BIN_CNT * sizeof(bin_t);
-    // Round up bin_size to page boundary for alignment
-    size_t required_size = roundToPage(bin_size);
+  /* setup bins */
+  if (setup_bins() != 0) {
+    return -1; // unable to setup bins
+  }
 
-    void* ptr = mem_sbrk(required_size);
-    if (ptr == (void *)-1)
-        return -1; // unable to allocate memory
-    bins = (bin_t*)ptr;
+  /* install sentinel blocks */
+  size_t total_size = sizeof(block_t) + sizeof(packed_t);
+  /* align first sentinel block */
+  size_t current_heap_end = (size_t)mem_heap_hi() + 1;
+  size_t aligned_addr = ALIGN(current_heap_end);
+  size_t alignment_padding = aligned_addr - current_heap_end;
+  void *mem_ptr = mem_sbrk(total_size + alignment_padding);
+  if (mem_ptr == (void *)(-1)) {
+    return -1; // unable to allocate memory
+  }
+  sentinel_block1 = (block_t *)aligned_addr;
+  *GET_HEADER_P(sentinel_block1) = PACK(0, true);
+  *GET_FOOTER_P(sentinel_block1) = PACK(0, true);
 
-    // initialize each bin
-    for (size_t i = 0; i < BIN_CNT; i++) {
-        // each bin handles blocks of size (i + 1) * ALIGNMENT
-        bins[i].block_size = (i + 1) * ALIGNMENT;
-        bins[i].runs = NULL;
-    }
+  mem_ptr = mem_sbrk(total_size);
+  if (mem_ptr == (void *)(-1)) {
+    return -1; // unable to allocate memory
+  }
+  sentinel_block2 = (block_t *)mem_ptr;
+  *GET_HEADER_P(sentinel_block2) = PACK(0, true);
+  *GET_FOOTER_P(sentinel_block2) = PACK(0, true);
 
-    // step 2. initialize segregated free lists for large blocks
+  return 0;
+}
 
-    // step 3. unset freed_runs_head
-    freed_runs_head = NULL;
-    return 0;
+/*
+Try to split the block, and modify their headers and footers accordingly
+and modify their corresponding free list in bin to reflect the change
+
+if the block is too small to accommodate both the old and new blocks
+(because header and footer took 4 words), simply mark the block as alloced
+and remove the block from free list
+*/
+static block_t *split_block(block_t *old_block, size_t size) {
+  /* round the size up to ALIGNMENT */
+  size = ROUND(size);
+
+  /*
+        when the block is too small, it is not worth splitting
+        new_size = old_size - size - sizeof(packed_t) - sizeof(block_t)
+        should be at least 8 bytes
+        (old_size - size) should be at leat 8 + header + footer
+        */
+  size_t old_size = GET_SIZE(old_block->header);
+  if (old_size - size <= MIN_BLOCK_SIZE) {
+    /* remove the block from the bin and register it as allocated */
+    *GET_HEADER_P(old_block) = PACK(old_size, true);
+    *GET_FOOTER_P(old_block) = PACK(old_size, true);
+    remove_block(old_block, bin_index(old_size));
+    dbg_unregister_block(old_block);
+    dbg_register_block(old_block, false);
+    return old_block;
+  }
+
+  /* split the block into size + newsize blocks */
+  /*
+  |--*old_blk--|---------------------old_size----------------------|---old_footer--|
+  |--*old_blk--|--size--|--old_footer--|--*new_block--|--new_size--|---new_footer--|
+  */
+  *GET_HEADER_P(old_block) = PACK(size, true);
+  *GET_FOOTER_P(old_block) = PACK(size, true);
+  /* create a new block for the remaining part */
+  size_t new_size = old_size - size - sizeof(packed_t) - sizeof(block_t);
+  block_t *new_block =
+      (block_t *)((char *)old_block->data + size + sizeof(packed_t)); // footer
+  *GET_HEADER_P(new_block) = PACK(new_size, false);
+  *GET_FOOTER_P(new_block) = PACK(new_size, false);
+  new_block->next = NULL;
+  new_block->prev = NULL;
+  insert_block(new_block, bin_index(new_size));
+  remove_block(old_block, bin_index(old_size));
+  dbg_unregister_block(old_block);
+  dbg_register_block(old_block, false);
+  dbg_register_block(new_block, true);
+  return old_block;
 }
 
 /*
  * malloc
+ * we first find the bin that the `size` belongs to, and take the first free
+ * block from the bin, because this should always fit the object required
+ * we only need to split the block if it is too large, and return the remainder
+ * to its corresponding bin
+ * if no fit is found, we allocate a new block, and return the pointer to the
+ * data we also need to adjust the right sentinel block2
  */
-void *malloc (size_t size) {
-    if (size <= 0)
-        return NULL;
-    // Round up size to 8-byte alignment
-    size_t aligned_size = ALIGN_SIZE(size);
-    
-    // if is small object, handle using bins
-    if (aligned_size < SIZE_THRESHOLD) {
-        // bin_index = (aligned_size / ALIGNMENT) - 1
-        // bin 0 handles size 8, bin 1 handles size 16, etc.
-        size_t bin_index = (aligned_size / ALIGNMENT) - 1;
-        if (bin_index >= BIN_CNT) {
-            // Shouldn't happen if SIZE_THRESHOLD is correct, but safety check
-            bin_index = BIN_CNT - 1;
-        }
-        return placeInBin(&bins[bin_index]);
-    }
-    // if is big object, handle using segregated free lists
-    else {
-        // TODO: place in segregated free lists
-        return NULL;
-    }
+void *malloc(size_t size) {
+#ifdef DEBUG
+  mm_checkheap(__LINE__);
+#endif
+
+  size_t bin_idx = bin_index(size);
+
+  /* search free list in bin for a fit */
+  block_t *curr = bins[bin_idx].head;
+  if (curr != NULL) {
+    /* split the block and return the desired block */
+    curr = split_block(curr, size);
+
+#ifdef DEBUG
+		dbg_log_trace(__LINE__, ALLOC, size, curr->data, curr);
+		mm_checkheap(__LINE__);
+#endif
+
+    return curr->data;
+  }
+
+  /* no fit found, allocate a new block */
+  size_t new_block_size = ROUND(size);
+  size_t block_overhead =
+      DATA_OFFSET + sizeof(packed_t); // header + prev + next + footer
+  size_t total_size = new_block_size + block_overhead;
+
+  /* Get current heap end and calculate aligned block address */
+  size_t current_heap_end = (size_t)mem_heap_hi() + 1;
+  size_t aligned_addr = ALIGN(current_heap_end);
+  size_t alignment_padding = aligned_addr - current_heap_end;
+
+  /* Allocate space including alignment padding */
+  void *ptr = mem_sbrk(total_size + alignment_padding);
+  if (ptr == (void *)(-1)) {
+    return NULL;
+  }
+
+  /* The new block starts at the aligned address */
+  block_t *new_block = (block_t *)aligned_addr;
+
+  /* Update sentinel_block2 to be after the new block */
+  size_t sentinel_addr = aligned_addr + total_size;
+  sentinel_addr = ALIGN(sentinel_addr);
+  sentinel_block2 = (block_t *)sentinel_addr;
+  *GET_HEADER_P(sentinel_block2) = PACK(0, true);
+  *GET_FOOTER_P(sentinel_block2) = PACK(0, true);
+
+  /* Set up the new block */
+  *GET_HEADER_P(new_block) = PACK(new_block_size, true);
+  *GET_FOOTER_P(new_block) = PACK(new_block_size, true);
+  new_block->next = NULL;
+  new_block->prev = NULL;
+
+#ifdef DEBUG
+	dbg_log_trace(__LINE__, ALLOC, size, new_block->data, new_block);
+  mm_checkheap(__LINE__);
+#endif
+
+  return new_block->data;
 }
 
 /*
  * free
+ * simply mark the block as not allocated, and coalesce if possible
  */
-void free (void *ptr) {
-    if(!ptr) return;
-    page_types_t t = getPtrType(ptr);
-    if (t.type == TSMALL) {
-        run_t* run = getRunFromPtr(ptr);
-        size_t block_size = run->block_size;
-        size_t nth = ((byte_t*)ptr - (byte_t*)run->slots) / block_size;
-        modifySlot(run, nth, 0);
-        run->slots_used--;
-        // if all slots are free, remove from bin and add to freed list
-        if (run->slots_used == 0) {
-            // Find which bin this run belongs to
-            size_t bin_index = (block_size / ALIGNMENT) - 1;
-            if (bin_index < BIN_CNT) {
-                removeRunFromBin(&bins[bin_index], run);
-            }
-            addRunToFreedList(run);
-        }
-    }
-    else {
-        // TODO: free from segregated free lists
-    }
+void free(void *ptr) {
+	/* ignore free(NULL) */
+  if (!ptr)
+    return;
+
+  /* find the block pointer by data pointer */
+  block_t *block_ptr = GET_HEADER_P_BY_DATA(ptr);
+
+#ifdef DEBUG
+	dbg_log_trace(__LINE__, FREE, GET_SIZE(block_ptr->header), ptr, block_ptr);
+  mm_checkheap(__LINE__);
+#endif
+
+  coalesce(block_ptr);
+
+#ifdef DEBUG
+  mm_checkheap(__LINE__);
+#endif
 }
 
 /*
- * realloc - you may want to look at mm-naive.c
+ * realloc
+ * TODO: Implement expansion
  */
 void *realloc(void *oldptr, size_t size) {
-    return NULL;
+#ifdef DEBUG
+  mm_checkheap(__LINE__);
+#endif
+
+  size_t oldsize;
+  void *newptr;
+
+  /* If size == 0 then this is just free, and we return NULL. */
+  if (size == 0) {
+    free(oldptr);
+    return 0;
+  }
+
+  /* If oldptr is NULL, then this is just malloc. */
+  if (oldptr == NULL) {
+    return malloc(size);
+  }
+
+  newptr = malloc(size);
+
+  /* If realloc() fails the original block is left untouched  */
+  if (!newptr) {
+    return 0;
+  }
+
+  /* Copy the old data. */
+  block_t *block_ptr = GET_HEADER_P_BY_DATA(oldptr);
+  oldsize = GET_SIZE(block_ptr->header);
+
+  if (size < oldsize)
+    oldsize = size;
+  memcpy(newptr, oldptr, oldsize);
+
+  /* Free the old block. */
+  free(oldptr);
+
+#ifdef DEBUG
+	dbg_log_trace(__LINE__, REALLOC, size, newptr, block_ptr);
+  mm_checkheap(__LINE__);
+#endif
+
+  return newptr;
 }
 
 /*
  * calloc - you may want to look at mm-naive.c
- * This function is not tested by mdriver, but it is
- * needed to run the traces.
+ * initialize a nmemb * size block of memory to 0
  */
-void *calloc (size_t nmemb, size_t size) {
-    void* ptr = malloc(nmemb * size);
-    if (ptr == NULL)
-        return NULL;
-    memset(ptr, 0, nmemb * size);
-    return ptr;
-}
+void *calloc(size_t nmemb, size_t size) {
+  size_t bytes = nmemb * size;
+  void *newptr;
 
+  newptr = malloc(bytes);
+  memset(newptr, 0, bytes);
+
+  return newptr;
+}
 
 /*
  * Return whether the pointer is in the heap.
  * May be useful for debugging.
  */
 static int in_heap(const void *p) {
-    return p <= mem_heap_hi() && p >= mem_heap_lo();
+  return p <= mem_heap_hi() && p >= mem_heap_lo();
 }
 
 /*
  * Return whether the pointer is aligned.
  * May be useful for debugging.
  */
-static int aligned(const void *p) {
-    return (size_t)ALIGN_PTR(p) == (size_t)p;
+static int aligned(const void *p) { return (size_t)ALIGN(p) == (size_t)p; }
+
+/*
+ * keep a side note of all the blocks in heap, for debugging
+ */
+
+/*
+ * dump the heap if a catastrophic error occurs
+ */
+static void dump_heap(int lineno) {
+	dbg_printf("mm_checkheap failed at line %d, dumping heap\n", lineno);
+	dbg_printf("\n\n>>> snapshot <<<\n");
+  /* dump free blocks in each bin*/
+  dbg_printf("Bin status:\n");
+  for (size_t i = 0; i < NUM_CLASSES; i++) {
+    block_t *curr = bins[i].head;
+    size_t min_size = bins[i].block_size_min;
+    size_t max_size = bins[i].block_size_max;
+    if (curr != NULL) {
+      dbg_printf("Bin %zu (%lx-%lx): ", i, min_size, max_size);
+      while (curr != NULL) {
+        dbg_printf("%p (size 0x%lx)", curr, GET_SIZE(curr->header));
+        if (curr->next != NULL) {
+          dbg_printf(" <-> ");
+        }
+        curr = curr->next;
+      }
+      dbg_printf("\n");
+    }
+  }
+  /* dump blocks registered in side note */
+  dbg_printf("All blocks:\n");
+  for (size_t i = 0; i < dbg_blk_entries_idx; i++) {
+    if (!dbg_blk_entries[i].is_used) {
+      continue;
+    }
+    block_t *blk_ptr = dbg_blk_entries[i].blk_ptr;
+    dbg_printf("Block %p (size 0x%lx, %s)\n", blk_ptr,
+               GET_SIZE(blk_ptr->header),
+               dbg_blk_entries[i].is_free ? "free" : "allocated");
+  }
+
+	/* show call stack */
+	dbg_printf("\n\n>>> calls <<<\n");
+	for (size_t i = 0; i < dbg_trace_entries_idx; i++) {
+		size_t idx = dbg_trace_entries_idx - i - 1;
+		dbg_printf(" #%ld mm.c:%d %s %p (size 0x%lx)\n",
+			i,
+			dbg_trace_entries[idx].lineno,
+			dbg_trace_entries[idx].op == ALLOC ? "ALLOC" :
+			dbg_trace_entries[idx].op == FREE ? "FREE" : "REALLOC", 
+			dbg_trace_entries[idx].ptr, dbg_trace_entries[idx].size);
+		dbg_printf("  block %p\n", dbg_trace_entries[idx].blk_ptr);
+		if (i > 10) {
+			dbg_printf("  ...\n");
+			break;
+		}
+	}
+	dbg_printf("\n\n");
 }
 
 /*
  * mm_checkheap
  */
 void mm_checkheap(int lineno) {
+  /* check size constraints and header/footer */
+	errno = 0;
+  for (size_t i = 0; i < NUM_CLASSES; i++) {
+    block_t *curr = bins[i].head;
+    size_t min_size = bins[i].block_size_min;
+    size_t max_size = bins[i].block_size_max;
+
+    while (curr != NULL) {
+      size_t size = GET_SIZE(curr->header);
+      ASSERT(size >= min_size && size <= max_size, "Block size out of range");
+      ASSERT(GET_ALLOC(curr->header) == false, "Block is allocated");
+      ASSERT(GET_ALLOC(*GET_FOOTER_P(curr)) == false, "Footer is allocated");
+			if (errno != 0) {
+				fprintf(stderr, "@block %p\n", curr);
+			}
+      curr = curr->next;
+    }
+  }
+	if (errno != 0) {
+		dump_heap(lineno);
+		exit(1);
+	}
+
+  /* check doubly linked list integrity */
+	errno = 0;
+  for (size_t i = 0; i < NUM_CLASSES; i++) {
+    block_t *curr = bins[i].head;
+    while (curr != NULL && curr->next != NULL) {
+      ASSERT(curr->next->prev == curr, "Doubly linked list integrity violated");
+			if (errno != 0) {
+				fprintf(stderr, "@block %p\n", curr);
+			}
+      curr = curr->next;
+    }
+  }
+	if (errno != 0) {
+		dump_heap(lineno);
+		exit(1);
+	}
+
+  /* check header footer consistency */
+	errno = 0;
+  for (size_t i = 0; i < dbg_blk_entries_idx; i++) {
+    if (!dbg_blk_entries[i].is_used) {
+      continue;
+    }
+    block_t *blk_ptr = dbg_blk_entries[i].blk_ptr;
+    ASSERT(GET_SIZE(blk_ptr->header) == GET_SIZE(*GET_FOOTER_P(blk_ptr)),
+           "Header footer consistency violated");
+    ASSERT(GET_ALLOC(blk_ptr->header) == !dbg_blk_entries[i].is_free,
+           "Allocated bit consistency violated");
+    ASSERT(GET_ALLOC(*GET_FOOTER_P(blk_ptr)) == !dbg_blk_entries[i].is_free,
+           "Allocated bit consistency violated");
+    if (errno != 0) {
+      fprintf(stderr, "@block %p\n", blk_ptr);
+      break;
+    }
+  }
+  if (errno != 0) {
+    dump_heap(lineno);
+    exit(1);
+  }
+}
+
+/* setup bins according to the size classes */
+static int setup_bins() {
+  void *ptr = mem_sbrk(sizeof(bin_t) * NUM_CLASSES);
+  if (ptr == (void *)(-1)) {
+    return -1; // unable to allocate memory
+  }
+  bins = (bin_t *)ptr;
+  for (size_t i = 0; i < NUM_CLASSES; i++) {
+    if (i == 0) {
+      bins[i].block_size_min = 0;
+    } else {
+      bins[i].block_size_min = size_classes[i - 1];
+    }
+    bins[i].block_size_max = size_classes[i];
+    bins[i].head = NULL;
+  }
+  return 0;
+}
+
+/* return the index of the bin that the `size` belongs to */
+size_t bin_index(size_t size) {
+  /* round the size up to ALIGNMENT*/
+  size = ROUND(size);
+  /* find the smallest class that can fit the size */
+  for (size_t i = 0; i < NUM_CLASSES; i++) {
+    if (size <= size_classes[i]) {
+      return i;
+    }
+  }
+  /* should never reach here*/
+  return NUM_CLASSES - 1;
+}
+
+/*
+free the current block and coalesce adjacent free blocks if possible
+place the combined big free block to its corresponding bin
+*/
+static void coalesce(block_t *block_ptr) {
+
+  /* By prev and next, we mean physically adjacent blocks */
+  block_t *next_blk = GET_RHEADER_P(block_ptr);
+  packed_t next_header = *GET_HEADER_P(next_blk);
+  packed_t prev_footer = *GET_LFOOTER_P(block_ptr);
+  if (GET_ALLOC(next_header) && GET_ALLOC(prev_footer)) {
+    /* Case 1: both blocks are allocated */
+    /* cannot coalesce, insert only the current block */
+		*GET_HEADER_P(block_ptr) = PACK(GET_SIZE(block_ptr->header), false);
+		*GET_FOOTER_P(block_ptr) = PACK(GET_SIZE(block_ptr->header), false);
+    insert_block(block_ptr, bin_index(GET_SIZE(block_ptr->header)));
+    dbg_unregister_block(block_ptr);
+    dbg_register_block(block_ptr, true);
+
+  } else if (GET_ALLOC(next_header) && !GET_ALLOC(prev_footer)) {
+    /* Case 2: next block is allocated, previous block is free */
+    block_t *prev_blk = GET_LHEADER_P(block_ptr);
+    size_t prev_size = GET_SIZE(prev_blk->header);
+    /* the combined size = previous block size + current block size + header and
+       footer
+                        |--*prev_blk--|--prev_size---|--footer--|--*block_ptr--|--block_size---|--footer--|
+                        |--*prev_blk--|--new_size----------------------------------------------|--footer--|
+                        */
+    size_t new_size = prev_size + GET_SIZE(block_ptr->header) +
+                      sizeof(packed_t) + sizeof(block_t);
+    *GET_HEADER_P(prev_blk) = PACK(new_size, false);
+    *GET_FOOTER_P(prev_blk) = PACK(new_size, false);
+    prev_blk->next = NULL;
+    prev_blk->prev = NULL;
+    remove_block(prev_blk, bin_index(prev_size));
+    insert_block(prev_blk, bin_index(new_size));
+    dbg_unregister_block(prev_blk);
+    dbg_unregister_block(block_ptr);
+    dbg_register_block(prev_blk, true);
+
+  } else if (!GET_ALLOC(next_header) && GET_ALLOC(prev_footer)) {
+    /* Case 3: next block is free, previous block is allocated */
+    block_t *next_blk = GET_RHEADER_P(block_ptr);
+    size_t next_size = GET_SIZE(next_blk->header);
+    /* the combined size = previous block size + current block size + header and
+     * footer */
+    size_t new_size = GET_SIZE(block_ptr->header) + sizeof(packed_t) +
+                      sizeof(block_t) + next_size;
+    *GET_HEADER_P(block_ptr) = PACK(new_size, false);
+    *GET_FOOTER_P(block_ptr) = PACK(new_size, false);
+    block_ptr->next = NULL;
+    block_ptr->prev = NULL;
+    remove_block(next_blk, bin_index(next_size));
+    insert_block(block_ptr, bin_index(new_size));
+    dbg_unregister_block(next_blk);
+    dbg_unregister_block(block_ptr);
+    dbg_register_block(block_ptr, true);
+
+  } else if (!GET_ALLOC(next_header) && !GET_ALLOC(prev_footer)) {
+    /* Case 4: both blocks are free */
+    block_t *prev_blk = GET_LHEADER_P(block_ptr);
+    block_t *next_blk = GET_RHEADER_P(block_ptr);
+    size_t prev_size = GET_SIZE(prev_blk->header);
+    size_t next_size = GET_SIZE(next_blk->header);
+
+    /* the combined size = previous block size + header and footer +
+            current block size +
+      header and footer + next block size */
+    size_t new_size = prev_size + (sizeof(packed_t) + sizeof(block_t)) * 2 +
+                      next_size + GET_SIZE(block_ptr->header);
+    *GET_HEADER_P(prev_blk) = PACK(new_size, false);
+    *GET_FOOTER_P(prev_blk) = PACK(new_size, false);
+    remove_block(prev_blk, bin_index(prev_size));
+    remove_block(next_blk, bin_index(next_size));
+    prev_blk->next = NULL;
+    prev_blk->prev = NULL;
+    insert_block(prev_blk, bin_index(new_size));
+    dbg_unregister_block(prev_blk);
+    dbg_unregister_block(next_blk);
+    dbg_unregister_block(block_ptr);
+    dbg_register_block(prev_blk, true);
+
+  } else {
+    ASSERT(false, "Invalid block state");
+    exit(1);
+  }
+  return;
+}
+
+/* insert a free block into the corresponding bin free list*/
+static void insert_block(block_t *block, size_t bin_idx) {
+  // dbg_printf("Inserting into bin %zu\n", bin_idx);
+  block->next = bins[bin_idx].head;
+	block->prev = NULL;
+  if (bins[bin_idx].head != NULL) {
+    bins[bin_idx].head->prev = block;
+  }
+  bins[bin_idx].head = block;
+}
+
+/*
+remove a block from the corresponding bin free list
+have to make sure its actually **in** the list
+*/
+static void remove_block(block_t *block, size_t bin_idx) {
+  // dbg_printf("Removing from bin %zu\n", bin_idx);
+  if (block->prev) {
+    block->prev->next = block->next;
+  } else {
+    bins[bin_idx].head = block->next;
+  }
+  if (block->next) {
+    block->next->prev = block->prev;
+  }
+  block->next = NULL;
+  block->prev = NULL;
+}
+
+/* register a block to side note */
+static void dbg_register_block(block_t *block, bool is_free) {
+#ifdef DEBUG
+  for (size_t i = 0; i < dbg_blk_entries_idx; i++) {
+    if (!dbg_blk_entries[i].is_used) {
+      dbg_blk_entries[i].blk_ptr = block;
+      dbg_blk_entries[i].is_free = is_free;
+      dbg_blk_entries[i].is_used = true;
+      return;
+    }
+  }
+  dbg_blk_entries[dbg_blk_entries_idx].blk_ptr = block;
+  dbg_blk_entries[dbg_blk_entries_idx].is_free = is_free;
+  dbg_blk_entries[dbg_blk_entries_idx].is_used = true;
+  dbg_blk_entries_idx++;
+#endif
+}
+
+/* delete registered block from side note*/
+static void dbg_unregister_block(block_t *block) {
+#ifdef DEBUG
+  for (size_t i = 0; i < dbg_blk_entries_idx; i++) {
+    if (dbg_blk_entries[i].blk_ptr == block) {
+      dbg_blk_entries[i].is_used = false;
+      break;
+    }
+  }
+#endif
+}
+
+/* log a trace entry */
+static void dbg_log_trace(int lineno, enum dbg_op_type op, size_t size, void *ptr, block_t *blk_ptr) {
+#ifdef DEBUG
+	dbg_trace_entries[dbg_trace_entries_idx].lineno = lineno;
+	dbg_trace_entries[dbg_trace_entries_idx].op = op;
+	dbg_trace_entries[dbg_trace_entries_idx].size = size;
+	dbg_trace_entries[dbg_trace_entries_idx].ptr = ptr;
+	dbg_trace_entries[dbg_trace_entries_idx].blk_ptr = blk_ptr;
+	dbg_trace_entries_idx++;
+#endif
 }
