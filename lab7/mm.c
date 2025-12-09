@@ -20,7 +20,7 @@
 
 /* If you want debugging output, use the following macro.  When you hand
  * in, remove the #define DEBUG line. */
-// #define DEBUG
+#define DEBUG
 #ifdef DEBUG
 #define dbg_printf(...) printf(__VA_ARGS__)
 #else
@@ -378,23 +378,41 @@ void *realloc(void *oldptr, size_t size) {
     return malloc(size);
   }
 
-  newptr = malloc(size);
+	/* try to combine the block on the right */
+	block_t *block_ptr = GET_HEADER_P_BY_DATA(oldptr);
+	block_t *next_block = GET_RHEADER_P(block_ptr);
+	if (!GET_ALLOC(next_block->header) && GET_SIZE(next_block->header) + GET_SIZE(block_ptr->header) >= size) {
+		/* remove the next block from the bin */
+		remove_block(next_block, bin_index(GET_SIZE(next_block->header)));
+		dbg_unregister_block(next_block);
+		/* combine the two blocks */
+		size_t new_size = GET_SIZE(next_block->header) + GET_SIZE(block_ptr->header) + sizeof(packed_t) + sizeof(block_t);
+		*GET_HEADER_P(block_ptr) = PACK(new_size, true);
+		*GET_FOOTER_P(block_ptr) = PACK(new_size, true);
+		dbg_unregister_block(block_ptr);
+		dbg_register_block(__LINE__, block_ptr, false);
+		return block_ptr->data;
+	}
+	else {
+		/* failed to combine, fall back to naive implementation */
+		newptr = malloc(size);
 
-  /* If realloc() fails the original block is left untouched  */
-  if (!newptr) {
-    return 0;
-  }
+		/* If realloc() fails the original block is left untouched  */
+		if (!newptr) {
+			return 0;
+		}
 
-  /* Copy the old data. */
-  block_t *block_ptr = GET_HEADER_P_BY_DATA(oldptr);
-  oldsize = GET_SIZE(block_ptr->header);
+		/* Copy the old data. */
+		block_t *block_ptr = GET_HEADER_P_BY_DATA(oldptr);
+		oldsize = GET_SIZE(block_ptr->header);
 
-  if (size < oldsize)
-    oldsize = size;
-  memcpy(newptr, oldptr, oldsize);
+		if (size < oldsize)
+			oldsize = size;
+		memcpy(newptr, oldptr, oldsize);
 
-  /* Free the old block. */
-  free(oldptr);
+		/* Free the old block. */
+		free(oldptr);
+	}
 
 #ifdef DEBUG
   dbg_log_trace(__LINE__, REALLOC, size, newptr, block_ptr);
