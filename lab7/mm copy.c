@@ -116,7 +116,11 @@ static const size_t size_classes[] = {
     (size_t)-1 // for objects larger than 1024, use the same bin
 };
 static const int NUM_CLASSES = sizeof(size_classes) / sizeof(size_classes[0]);
-static const size_t MIN_BLOCK_SIZE = 64;
+#define MIN_BLOCK_SIZE 64
+#define COOLDOWN_CNT 5
+
+/* allow to miss 3 times before sweeping the bins */
+static size_t cooldown = COOLDOWN_CNT;
 
 /* sentinel blocks are used to mark the beginning and end of the block arena */
 static block_t *sentinel_block1;
@@ -129,6 +133,7 @@ static void insert_block(block_t *block, size_t bin_idx);
 static void remove_block(block_t *block, size_t bin_idx);
 static block_t *split_block(block_t *old_block, size_t size);
 static void coalesce(block_t *block_ptr);
+static void sweepbins();
 
 /* debug structs and functions */
 typedef struct dbg_blk_entry {
@@ -301,7 +306,26 @@ void *malloc(size_t size) {
 		curr = curr->next;
 	}
 
-  /* no fit found, try coalescing the list */
+  /* no fit found, try coalescing all free blocks in heap */
+	cooldown--;
+	if (cooldown == 0) {
+		sweepbins();
+		/* try again */
+		curr = bins[bin_idx].cur;
+		if (curr == NULL) {
+			curr = bins[bin_idx].head;
+		}
+		while (curr != NULL) {
+			if (GET_SIZE(curr->header) >= size) {
+				bins[bin_idx].cur = curr->next;
+				curr = split_block(curr, size);
+				return curr->data;
+			}
+			curr = curr->next;
+		}
+	}
+
+	/* still not found, allocate new space */
   size_t new_block_size = ROUND(size);
   size_t block_overhead =
       DATA_OFFSET + sizeof(packed_t); // header + footer
@@ -807,4 +831,25 @@ static void dbg_log_trace(int lineno, enum dbg_op_type op, size_t size,
   dbg_trace_entries[dbg_trace_entries_idx].blk_ptr = blk_ptr;
   dbg_trace_entries_idx++;
 #endif
+}
+
+
+/* collasce all free blocks in heap */
+static void sweepbins() {
+	cooldown = COOLDOWN_CNT;
+	for (size_t i = 0; i < NUM_CLASSES; i++) {
+		block_t *curr = bins[i].head;
+		bool if_coalesced = false;
+		while (curr != NULL) {
+			if (!GET_ALLOC(curr->header)) {
+				coalesce(curr);
+				if_coalesced = true;
+			}
+			curr = curr->next;
+		}
+		/* reset pointer incase cur points to a void ptr */
+		if (if_coalesced) {
+			bins[i].cur = bins[i].head;
+		}
+	}
 }
