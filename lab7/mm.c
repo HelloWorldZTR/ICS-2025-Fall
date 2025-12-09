@@ -20,7 +20,7 @@
 
 /* If you want debugging output, use the following macro.  When you hand
  * in, remove the #define DEBUG line. */
-#define DEBUG
+// #define DEBUG
 #ifdef DEBUG
 #define dbg_printf(...) printf(__VA_ARGS__)
 #else
@@ -109,7 +109,7 @@ static const size_t size_classes[] = {
     (size_t)-1 // for objects larger than 1024, use the same bin
 };
 static const int NUM_CLASSES = sizeof(size_classes) / sizeof(size_classes[0]);
-static const size_t MIN_BLOCK_SIZE = 32;
+static const size_t MIN_BLOCK_SIZE = 64;
 
 /* sentinel blocks are used to mark the beginning and end of the block arena */
 static block_t *sentinel_block1;
@@ -133,29 +133,40 @@ typedef struct dbg_blk_entry {
 enum dbg_op_type { ALLOC, FREE, REALLOC };
 
 typedef struct dbg_trace_entry {
-	int lineno;
-	enum dbg_op_type op;
-	size_t size;
-	void *ptr;
-	block_t *blk_ptr;
+  int lineno;
+  enum dbg_op_type op;
+  size_t size;
+  void *ptr;
+  block_t *blk_ptr;
 } dbg_trace_entry;
 
 #ifdef DEBUG
-static dbg_blk_entry dbg_blk_entries[4096];
+#define DBG_BLK_ENTRIES_MAX 4096
+#define DBG_TRACE_ENTRIES_MAX 4096
+static dbg_blk_entry dbg_blk_entries[DBG_BLK_ENTRIES_MAX];
 static size_t dbg_blk_entries_idx = 0;
-static dbg_trace_entry dbg_trace_entries[8192];
+static dbg_trace_entry dbg_trace_entries[DBG_TRACE_ENTRIES_MAX];
 static size_t dbg_trace_entries_idx = 0;
 #endif
 
-static void dbg_register_block(block_t *block, bool is_free);
+static void dbg_register_block(int lineno, block_t *block, bool is_free);
 static void dbg_unregister_block(block_t *block);
-static void dbg_log_trace(int lineno, enum dbg_op_type op, size_t size, void *ptr, block_t *blk_ptr);
+static void dbg_log_trace(int lineno, enum dbg_op_type op, size_t size,
+                          void *ptr, block_t *blk_ptr);
 static void dump_heap(int lineno);
 
 /*
  * Initialize: return -1 on error, 0 on success.
  */
 int mm_init(void) {
+#ifdef DEBUG
+	/* reset side note */
+	dbg_blk_entries_idx = 0;
+	dbg_trace_entries_idx = 0;
+	memset(dbg_blk_entries, 0, sizeof(dbg_blk_entries));
+	memset(dbg_trace_entries, 0, sizeof(dbg_trace_entries));
+#endif
+
   /* reset heap size */
   mem_reset_brk();
 
@@ -165,26 +176,30 @@ int mm_init(void) {
   }
 
   /* install sentinel blocks */
-  size_t total_size = sizeof(block_t) + sizeof(packed_t);
-  /* align first sentinel block */
+  size_t sentinel_size = sizeof(block_t) + sizeof(packed_t);
+  /* align sentinel block 1 */
   size_t current_heap_end = (size_t)mem_heap_hi() + 1;
   size_t aligned_addr = ALIGN(current_heap_end);
   size_t alignment_padding = aligned_addr - current_heap_end;
-  void *mem_ptr = mem_sbrk(total_size + alignment_padding);
+  void *mem_ptr = mem_sbrk(sentinel_size + alignment_padding);
   if (mem_ptr == (void *)(-1)) {
     return -1; // unable to allocate memory
   }
   sentinel_block1 = (block_t *)aligned_addr;
   *GET_HEADER_P(sentinel_block1) = PACK(0, true);
   *GET_FOOTER_P(sentinel_block1) = PACK(0, true);
-
-  mem_ptr = mem_sbrk(total_size);
+	/* install sentinel block 2*/
+  mem_ptr = mem_sbrk(sentinel_size);
   if (mem_ptr == (void *)(-1)) {
     return -1; // unable to allocate memory
   }
   sentinel_block2 = (block_t *)mem_ptr;
   *GET_HEADER_P(sentinel_block2) = PACK(0, true);
   *GET_FOOTER_P(sentinel_block2) = PACK(0, true);
+
+#ifdef DEBUG
+	mm_checkheap(__LINE__);
+#endif
 
   return 0;
 }
@@ -214,7 +229,7 @@ static block_t *split_block(block_t *old_block, size_t size) {
     *GET_FOOTER_P(old_block) = PACK(old_size, true);
     remove_block(old_block, bin_index(old_size));
     dbg_unregister_block(old_block);
-    dbg_register_block(old_block, false);
+    dbg_register_block(__LINE__, old_block, false);
     return old_block;
   }
 
@@ -236,8 +251,8 @@ static block_t *split_block(block_t *old_block, size_t size) {
   insert_block(new_block, bin_index(new_size));
   remove_block(old_block, bin_index(old_size));
   dbg_unregister_block(old_block);
-  dbg_register_block(old_block, false);
-  dbg_register_block(new_block, true);
+  dbg_register_block(__LINE__, old_block, false);
+  dbg_register_block(__LINE__, new_block, true);
   return old_block;
 }
 
@@ -259,44 +274,48 @@ void *malloc(size_t size) {
 
   /* search free list in bin for a fit */
   block_t *curr = bins[bin_idx].head;
-  if (curr != NULL) {
-    /* split the block and return the desired block */
-    curr = split_block(curr, size);
-
+  while (curr != NULL) {
+		/* first fit*/
+		if (GET_SIZE(curr->header) >= size) {
+			/* split the block and return the desired block */
+			curr = split_block(curr, size);
 #ifdef DEBUG
-		dbg_log_trace(__LINE__, ALLOC, size, curr->data, curr);
-		mm_checkheap(__LINE__);
+			dbg_log_trace(__LINE__, ALLOC, size, curr->data, curr);
+			mm_checkheap(__LINE__);
 #endif
-
-    return curr->data;
-  }
+			return curr->data;
+		}
+		curr = curr->next;
+	}
 
   /* no fit found, allocate a new block */
   size_t new_block_size = ROUND(size);
   size_t block_overhead =
-      DATA_OFFSET + sizeof(packed_t); // header + prev + next + footer
+      DATA_OFFSET + sizeof(packed_t); // header + footer
+	size_t sentinel_size = DATA_OFFSET + sizeof(packed_t);
   size_t total_size = new_block_size + block_overhead;
+	size_t required_size = total_size + sentinel_size;
 
-  /* Get current heap end and calculate aligned block address */
-  size_t current_heap_end = (size_t)mem_heap_hi() + 1;
-  size_t aligned_addr = ALIGN(current_heap_end);
-  size_t alignment_padding = aligned_addr - current_heap_end;
-
-  /* Allocate space including alignment padding */
-  void *ptr = mem_sbrk(total_size + alignment_padding);
+  /* Allocate space for the new block and the sentinel block2 */
+  void *ptr = mem_sbrk(required_size);
   if (ptr == (void *)(-1)) {
     return NULL;
   }
-
-  /* The new block starts at the aligned address */
-  block_t *new_block = (block_t *)aligned_addr;
+	/*
+	|---many blocks---|---sentinel2---| heap hi
+	|---many blocks---|---sentinelx---|--new_block----|----sentinel2---| heap hi
+	*/
+  block_t *new_block = (block_t *)ptr;
 
   /* Update sentinel_block2 to be after the new block */
-  size_t sentinel_addr = aligned_addr + total_size;
-  sentinel_addr = ALIGN(sentinel_addr);
-  sentinel_block2 = (block_t *)sentinel_addr;
+  sentinel_block2 = (block_t *)((char*)new_block + total_size);
   *GET_HEADER_P(sentinel_block2) = PACK(0, true);
   *GET_FOOTER_P(sentinel_block2) = PACK(0, true);
+
+#ifdef DEBUG
+	/* check sentinel block2 */
+	mm_checkheap(__LINE__);
+#endif
 
   /* Set up the new block */
   *GET_HEADER_P(new_block) = PACK(new_block_size, true);
@@ -305,7 +324,7 @@ void *malloc(size_t size) {
   new_block->prev = NULL;
 
 #ifdef DEBUG
-	dbg_log_trace(__LINE__, ALLOC, size, new_block->data, new_block);
+  dbg_log_trace(__LINE__, ALLOC, size, new_block->data, new_block);
   mm_checkheap(__LINE__);
 #endif
 
@@ -317,7 +336,7 @@ void *malloc(size_t size) {
  * simply mark the block as not allocated, and coalesce if possible
  */
 void free(void *ptr) {
-	/* ignore free(NULL) */
+  /* ignore free(NULL) */
   if (!ptr)
     return;
 
@@ -325,7 +344,7 @@ void free(void *ptr) {
   block_t *block_ptr = GET_HEADER_P_BY_DATA(ptr);
 
 #ifdef DEBUG
-	dbg_log_trace(__LINE__, FREE, GET_SIZE(block_ptr->header), ptr, block_ptr);
+  dbg_log_trace(__LINE__, FREE, GET_SIZE(block_ptr->header), ptr, block_ptr);
   mm_checkheap(__LINE__);
 #endif
 
@@ -378,7 +397,7 @@ void *realloc(void *oldptr, size_t size) {
   free(oldptr);
 
 #ifdef DEBUG
-	dbg_log_trace(__LINE__, REALLOC, size, newptr, block_ptr);
+  dbg_log_trace(__LINE__, REALLOC, size, newptr, block_ptr);
   mm_checkheap(__LINE__);
 #endif
 
@@ -421,8 +440,11 @@ static int aligned(const void *p) { return (size_t)ALIGN(p) == (size_t)p; }
  * dump the heap if a catastrophic error occurs
  */
 static void dump_heap(int lineno) {
-	dbg_printf("mm_checkheap failed at line %d, dumping heap\n", lineno);
-	dbg_printf("\n\n>>> snapshot <<<\n");
+#ifdef DEBUG
+  dbg_printf("mm_checkheap failed at line %d, dumping heap\n", lineno);
+	dbg_printf("heap_hi: %p, heap_lo: %p\n", mem_heap_hi(), mem_heap_lo());
+	dbg_printf("sentinel_block1: %p, sentinel_block2: %p\n", sentinel_block1, sentinel_block2);
+  dbg_printf("\n\n>>> snapshot <<<\n");
   /* dump free blocks in each bin*/
   dbg_printf("Bin status:\n");
   for (size_t i = 0; i < NUM_CLASSES; i++) {
@@ -453,31 +475,42 @@ static void dump_heap(int lineno) {
                dbg_blk_entries[i].is_free ? "free" : "allocated");
   }
 
-	/* show call stack */
-	dbg_printf("\n\n>>> calls <<<\n");
-	for (size_t i = 0; i < dbg_trace_entries_idx; i++) {
-		size_t idx = dbg_trace_entries_idx - i - 1;
-		dbg_printf(" #%ld mm.c:%d %s %p (size 0x%lx)\n",
-			i,
-			dbg_trace_entries[idx].lineno,
-			dbg_trace_entries[idx].op == ALLOC ? "ALLOC" :
-			dbg_trace_entries[idx].op == FREE ? "FREE" : "REALLOC", 
-			dbg_trace_entries[idx].ptr, dbg_trace_entries[idx].size);
-		dbg_printf("  block %p\n", dbg_trace_entries[idx].blk_ptr);
-		if (i > 10) {
-			dbg_printf("  ...\n");
-			break;
-		}
-	}
-	dbg_printf("\n\n");
+  /* show call stack */
+  dbg_printf("\n\n>>> calls <<<\n");
+  for (size_t i = 0; i < dbg_trace_entries_idx; i++) {
+    size_t idx = dbg_trace_entries_idx - i - 1;
+    dbg_printf(" #%ld mm.c:%d %s %p (size 0x%lx)\n", i,
+               dbg_trace_entries[idx].lineno,
+               dbg_trace_entries[idx].op == ALLOC  ? "ALLOC"
+               : dbg_trace_entries[idx].op == FREE ? "FREE"
+                                                   : "REALLOC",
+               dbg_trace_entries[idx].ptr, dbg_trace_entries[idx].size);
+    dbg_printf("  block %p\n", dbg_trace_entries[idx].blk_ptr);
+    if (i > 10) {
+      dbg_printf("  ...\n");
+      break;
+    }
+  }
+  dbg_printf("\n\n");
+#endif
 }
 
 /*
  * mm_checkheap
  */
 void mm_checkheap(int lineno) {
+#ifdef DEBUG
+	/* check sentinel block 2*/
+	size_t sentinel_size = sizeof(block_t) + sizeof(packed_t);
+	if ((char*)sentinel_block2 + sentinel_size - 1 != mem_heap_hi()) {
+		dbg_printf("sentinel_block2 is not at the end of the heap\n");
+		dbg_printf("sentinel_block2: %p, heap_hi: %p\n", sentinel_block2, mem_heap_hi());
+		dbg_printf("sentinel_size: %lu, heap_size: %lu\n", sentinel_size, mem_heap_hi() - mem_heap_lo());
+		dump_heap(lineno);
+		exit(1);
+	}
   /* check size constraints and header/footer */
-	errno = 0;
+  errno = 0;
   for (size_t i = 0; i < NUM_CLASSES; i++) {
     block_t *curr = bins[i].head;
     size_t min_size = bins[i].block_size_min;
@@ -488,36 +521,36 @@ void mm_checkheap(int lineno) {
       ASSERT(size >= min_size && size <= max_size, "Block size out of range");
       ASSERT(GET_ALLOC(curr->header) == false, "Block is allocated");
       ASSERT(GET_ALLOC(*GET_FOOTER_P(curr)) == false, "Footer is allocated");
-			if (errno != 0) {
-				fprintf(stderr, "@block %p\n", curr);
-			}
+      if (errno != 0) {
+        fprintf(stderr, "@block %p\n", curr);
+      }
       curr = curr->next;
     }
   }
-	if (errno != 0) {
-		dump_heap(lineno);
-		exit(1);
-	}
+  if (errno != 0) {
+    dump_heap(lineno);
+    exit(1);
+  }
 
   /* check doubly linked list integrity */
-	errno = 0;
+  errno = 0;
   for (size_t i = 0; i < NUM_CLASSES; i++) {
     block_t *curr = bins[i].head;
     while (curr != NULL && curr->next != NULL) {
       ASSERT(curr->next->prev == curr, "Doubly linked list integrity violated");
-			if (errno != 0) {
-				fprintf(stderr, "@block %p\n", curr);
-			}
+      if (errno != 0) {
+        fprintf(stderr, "@block %p\n", curr);
+      }
       curr = curr->next;
     }
   }
-	if (errno != 0) {
-		dump_heap(lineno);
-		exit(1);
-	}
+  if (errno != 0) {
+    dump_heap(lineno);
+    exit(1);
+  }
 
   /* check header footer consistency */
-	errno = 0;
+  errno = 0;
   for (size_t i = 0; i < dbg_blk_entries_idx; i++) {
     if (!dbg_blk_entries[i].is_used) {
       continue;
@@ -538,6 +571,7 @@ void mm_checkheap(int lineno) {
     dump_heap(lineno);
     exit(1);
   }
+#endif
 }
 
 /* setup bins according to the size classes */
@@ -586,11 +620,11 @@ static void coalesce(block_t *block_ptr) {
   if (GET_ALLOC(next_header) && GET_ALLOC(prev_footer)) {
     /* Case 1: both blocks are allocated */
     /* cannot coalesce, insert only the current block */
-		*GET_HEADER_P(block_ptr) = PACK(GET_SIZE(block_ptr->header), false);
-		*GET_FOOTER_P(block_ptr) = PACK(GET_SIZE(block_ptr->header), false);
+    *GET_HEADER_P(block_ptr) = PACK(GET_SIZE(block_ptr->header), false);
+    *GET_FOOTER_P(block_ptr) = PACK(GET_SIZE(block_ptr->header), false);
     insert_block(block_ptr, bin_index(GET_SIZE(block_ptr->header)));
     dbg_unregister_block(block_ptr);
-    dbg_register_block(block_ptr, true);
+    dbg_register_block(__LINE__,block_ptr, true);
 
   } else if (GET_ALLOC(next_header) && !GET_ALLOC(prev_footer)) {
     /* Case 2: next block is allocated, previous block is free */
@@ -598,20 +632,18 @@ static void coalesce(block_t *block_ptr) {
     size_t prev_size = GET_SIZE(prev_blk->header);
     /* the combined size = previous block size + current block size + header and
        footer
-                        |--*prev_blk--|--prev_size---|--footer--|--*block_ptr--|--block_size---|--footer--|
-                        |--*prev_blk--|--new_size----------------------------------------------|--footer--|
-                        */
+			|--*prev_blk--|--prev_size---|--footer--|--*block_ptr--|--block_size---|--footer--|
+			|--*prev_blk--|--new_size----------------------------------------------|--footer--|
+		*/
     size_t new_size = prev_size + GET_SIZE(block_ptr->header) +
                       sizeof(packed_t) + sizeof(block_t);
     *GET_HEADER_P(prev_blk) = PACK(new_size, false);
     *GET_FOOTER_P(prev_blk) = PACK(new_size, false);
-    prev_blk->next = NULL;
-    prev_blk->prev = NULL;
     remove_block(prev_blk, bin_index(prev_size));
     insert_block(prev_blk, bin_index(new_size));
     dbg_unregister_block(prev_blk);
     dbg_unregister_block(block_ptr);
-    dbg_register_block(prev_blk, true);
+    dbg_register_block(__LINE__,prev_blk, true);
 
   } else if (!GET_ALLOC(next_header) && GET_ALLOC(prev_footer)) {
     /* Case 3: next block is free, previous block is allocated */
@@ -629,7 +661,7 @@ static void coalesce(block_t *block_ptr) {
     insert_block(block_ptr, bin_index(new_size));
     dbg_unregister_block(next_blk);
     dbg_unregister_block(block_ptr);
-    dbg_register_block(block_ptr, true);
+    dbg_register_block(__LINE__, block_ptr, true);
 
   } else if (!GET_ALLOC(next_header) && !GET_ALLOC(prev_footer)) {
     /* Case 4: both blocks are free */
@@ -647,13 +679,11 @@ static void coalesce(block_t *block_ptr) {
     *GET_FOOTER_P(prev_blk) = PACK(new_size, false);
     remove_block(prev_blk, bin_index(prev_size));
     remove_block(next_blk, bin_index(next_size));
-    prev_blk->next = NULL;
-    prev_blk->prev = NULL;
     insert_block(prev_blk, bin_index(new_size));
     dbg_unregister_block(prev_blk);
     dbg_unregister_block(next_blk);
     dbg_unregister_block(block_ptr);
-    dbg_register_block(prev_blk, true);
+    dbg_register_block(__LINE__, prev_blk, true);
 
   } else {
     ASSERT(false, "Invalid block state");
@@ -666,7 +696,7 @@ static void coalesce(block_t *block_ptr) {
 static void insert_block(block_t *block, size_t bin_idx) {
   // dbg_printf("Inserting into bin %zu\n", bin_idx);
   block->next = bins[bin_idx].head;
-	block->prev = NULL;
+  block->prev = NULL;
   if (bins[bin_idx].head != NULL) {
     bins[bin_idx].head->prev = block;
   }
@@ -692,8 +722,12 @@ static void remove_block(block_t *block, size_t bin_idx) {
 }
 
 /* register a block to side note */
-static void dbg_register_block(block_t *block, bool is_free) {
+static void dbg_register_block(int lineno, block_t *block, bool is_free) {
 #ifdef DEBUG
+	/* disable protection */
+	if (dbg_blk_entries_idx >= DBG_BLK_ENTRIES_MAX)
+	  return;
+	/* register the block */
   for (size_t i = 0; i < dbg_blk_entries_idx; i++) {
     if (!dbg_blk_entries[i].is_used) {
       dbg_blk_entries[i].blk_ptr = block;
@@ -712,6 +746,10 @@ static void dbg_register_block(block_t *block, bool is_free) {
 /* delete registered block from side note*/
 static void dbg_unregister_block(block_t *block) {
 #ifdef DEBUG
+	/* disable protection */
+	if (dbg_blk_entries_idx >= DBG_BLK_ENTRIES_MAX)
+	  return;
+	/* unregister the block */
   for (size_t i = 0; i < dbg_blk_entries_idx; i++) {
     if (dbg_blk_entries[i].blk_ptr == block) {
       dbg_blk_entries[i].is_used = false;
@@ -722,13 +760,18 @@ static void dbg_unregister_block(block_t *block) {
 }
 
 /* log a trace entry */
-static void dbg_log_trace(int lineno, enum dbg_op_type op, size_t size, void *ptr, block_t *blk_ptr) {
+static void dbg_log_trace(int lineno, enum dbg_op_type op, size_t size,
+                          void *ptr, block_t *blk_ptr) {
 #ifdef DEBUG
-	dbg_trace_entries[dbg_trace_entries_idx].lineno = lineno;
-	dbg_trace_entries[dbg_trace_entries_idx].op = op;
-	dbg_trace_entries[dbg_trace_entries_idx].size = size;
-	dbg_trace_entries[dbg_trace_entries_idx].ptr = ptr;
-	dbg_trace_entries[dbg_trace_entries_idx].blk_ptr = blk_ptr;
-	dbg_trace_entries_idx++;
+	/* disable protection */
+	if (dbg_trace_entries_idx >= DBG_TRACE_ENTRIES_MAX)
+	  return;
+	/* log the trace entry */
+  dbg_trace_entries[dbg_trace_entries_idx].lineno = lineno;
+  dbg_trace_entries[dbg_trace_entries_idx].op = op;
+  dbg_trace_entries[dbg_trace_entries_idx].size = size;
+  dbg_trace_entries[dbg_trace_entries_idx].ptr = ptr;
+  dbg_trace_entries[dbg_trace_entries_idx].blk_ptr = blk_ptr;
+  dbg_trace_entries_idx++;
 #endif
 }
