@@ -84,7 +84,28 @@ static void *coalesce(void *bp);
 static void add_block(void *bp, int lineno);
 static void remove_block(void *bp, int lineno);
 
-static char* free_list_head = NULL;
+
+static const size_t size_classes[] = {
+    8, 16, 24, 32, 48, 56, 72, 96, 128, 192, 256, 512,
+    1024, (size_t)-1 // for objects larger than 1024, use the same bin
+};
+static const int NUM_CLASSES = sizeof(size_classes) / sizeof(size_classes[0]);
+
+typedef struct free_bin_t {
+    char* head;
+    char* rover;
+} free_bin_t;
+free_bin_t* bins;
+
+static int bin_index(size_t size){
+    size = MAX(size, 8);
+    for (int i = 0; i < NUM_CLASSES; i++) {
+        if (size <= size_classes[i]) {
+            return i;
+        }
+    }
+    return NUM_CLASSES - 1;
+};
 
 /* 
  * mm_init - Initialize the memory manager 
@@ -92,7 +113,15 @@ static char* free_list_head = NULL;
 int mm_init(void) 
 {
     /* reset free lists */
-    free_list_head = NULL;
+    size_t bins_size = sizeof(free_bin_t) * NUM_CLASSES;
+    if ((bins = (free_bin_t*)mem_sbrk(bins_size)) == (void *)(-1))
+        return -1;
+
+    for (int i = 0; i < NUM_CLASSES; i++) {
+        bins[i].head = NULL;
+        bins[i].rover = NULL;
+    }
+    
 
     /* Create the initial empty heap */
     if ((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1) 
@@ -256,14 +285,22 @@ void mm_checkheap(int lineno)
     lineno = lineno; /* keep gcc happy */
     if (1) {
         /* print free list info */
-        char* curr = free_list_head;
-        dbg_printf("Free list@%d:", lineno);
-        while (curr != NULL) {
-            // dbg_printf(" %p (size %u) => ", curr, GET_SIZE(HDRP(curr)));
-            dbg_printf(" %p -> ", curr);
-            curr = NEXT(curr);
+        for (int i = 0; i < NUM_CLASSES; i++) {
+            char* bp = bins[i].head;
+
+            if (bp == NULL) {
+                continue;
+            }
+
+            dbg_printf("Bin %d: ", i);
+
+            while (bp != NULL) {
+                dbg_printf("%p (%zu) -> ", bp, GET_SIZE(HDRP(bp)));
+                bp = NEXT(bp);
+            }
+
+            dbg_printf("NULL\n");
         }
-        dbg_printf("\n");
     }
 }
 
@@ -322,24 +359,24 @@ static void *coalesce(void *bp)
     }
 
     else if (!prev_alloc && next_alloc) {      /* Case 3 */
+        remove_block(PREV_BLKP(bp), __LINE__);
+
         size += GET_SIZE(HDRP(PREV_BLKP(bp)));
         PUT(FTRP(bp), PACK(size, 0));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
-
-        remove_block(PREV_BLKP(bp), __LINE__);
 
         bp = PREV_BLKP(bp);
         add_block(bp, __LINE__);
     }
 
     else {                                     /* Case 4 */
+        remove_block(PREV_BLKP(bp), __LINE__);
+        remove_block(NEXT_BLKP(bp), __LINE__);
+
         size += GET_SIZE(HDRP(PREV_BLKP(bp))) + 
             GET_SIZE(FTRP(NEXT_BLKP(bp)));
         PUT(HDRP(PREV_BLKP(bp)), PACK(size, 0));
         PUT(FTRP(NEXT_BLKP(bp)), PACK(size, 0));
-
-        remove_block(PREV_BLKP(bp), __LINE__);
-        remove_block(NEXT_BLKP(bp), __LINE__);
 
         bp = PREV_BLKP(bp);
         add_block(bp, __LINE__);
@@ -400,15 +437,28 @@ static void *find_fit(size_t asize)
     /* First-fit search */
     void *bp;
 
+#ifdef DEBUG
     mm_checkheap(__LINE__);
+#endif
 
-    bp = free_list_head;
+    int bin_idx = bin_index(asize);
+
+    bp = bins[bin_idx].head;
     while (bp != NULL) {
         if (asize <= GET_SIZE(HDRP(bp))) {
             return bp;
         }
         bp = NEXT(bp);
     }
+
+    /* No fit in this bin */
+    for(bin_idx = bin_idx + 1; bin_idx < NUM_CLASSES; bin_idx++) {
+        bp = bins[bin_idx].head;
+        if(bp != NULL) {
+            return bp;
+        }
+    }
+
     return NULL; /* No fit */
 #endif
 }
@@ -423,15 +473,16 @@ static void add_block(void *bp, int lineno)
     mm_checkheap(lineno);
     dbg_printf("\n");
 #endif
+    int bin_idx = bin_index(GET_SIZE(HDRP(bp)));
 
-    NEXT(bp) = free_list_head;
+    NEXT(bp) = bins[bin_idx].head;
     PREV(bp) = NULL;
 
-    if (free_list_head != NULL)
+    if (bins[bin_idx].head != NULL)
     {
-        PREV(free_list_head) = bp;
+        PREV(bins[bin_idx].head) = bp;
     }
-    free_list_head = bp;
+    bins[bin_idx].head = bp;
 }
 
 /*
@@ -444,6 +495,7 @@ static void remove_block(void *bp, int lineno)
     mm_checkheap(lineno);
     dbg_printf("\n");
 #endif
+    int bin_idx = bin_index(GET_SIZE(HDRP(bp)));
 
     if (PREV(bp))
     {
@@ -452,7 +504,7 @@ static void remove_block(void *bp, int lineno)
     else
     {
         /* is the first in free list */
-        free_list_head = NEXT(bp);
+        bins[bin_idx].head = NEXT(bp);
     }
     if (NEXT(bp))
     {
@@ -460,4 +512,6 @@ static void remove_block(void *bp, int lineno)
     }
     NEXT(bp) = NULL;
     PREV(bp) = NULL;
+
+    bins[bin_idx].rover = bins[bin_idx].head;
 }
