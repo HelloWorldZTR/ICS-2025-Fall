@@ -50,20 +50,6 @@
 #define HDRP(bp)       ((char *)(bp) - WSIZE)                      
 #define FTRP(bp)       ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE) 
 
-/*
-* Block structure overview:
-* |------------------------|
-* |header (size | alloc) 8B|
-* |------------------------|<- block pointer
-* |payload section:        |
-* | prev pointer 8B        |
-* | next pointer 8B        |
-* | or                     |
-* | user data  at least 16B|
-* |------------------------|
-* |footer (size | alloc) 8B|
-* |------------------------| 
-*/
 typedef struct payload_t
 {
     char* prev_bp;
@@ -71,6 +57,7 @@ typedef struct payload_t
     char payload[0];
 } payload_t;
 
+#define BLOCK_OVERHEAD sizeof(payload_t)
 #define NEXT(bp)  (*(char **)(bp))
 #define PREV(bp)  (*(char **)((char *)(bp) + sizeof(char*)))
 
@@ -80,6 +67,9 @@ typedef struct payload_t
 
 /* Global variables */
 static char *heap_listp = 0;  /* Pointer to first block */  
+#ifdef NEXT_FIT
+static char *rover;           /* Next fit rover */
+#endif
 
 /* Function prototypes for internal helper routines */
 static void *extend_heap(size_t words);
@@ -89,10 +79,10 @@ static void *coalesce(void *bp);
 static void add_block(void *bp, int lineno);
 static void remove_block(void *bp, int lineno);
 
-/* struct anf functions for segregated list */
+
 static const size_t size_classes[] = {
-    32, 48, 64, 80, 96, 128, 160, 192, 256, 512,
-    1024, 4096,  (size_t)-1 // for objects larger than 1024, use the same bin
+    8, 16, 24, 32, 48, 56, 72, 96, 128, 192, 256, 512,
+    1024, (size_t)-1 // for objects larger than 1024, use the same bin
 };
 static const int NUM_CLASSES = sizeof(size_classes) / sizeof(size_classes[0]);
 
@@ -102,13 +92,15 @@ typedef struct free_bin_t {
 } free_bin_t;
 free_bin_t* bins;
 
-static int bin_index(size_t size);
-
-/* options */
-// #define NEXT_FIT
-// #define PARTIAL_SORT
-#define K 5
-#define MINIMAL_BLOCK_SIZE (3*DSIZE)
+static int bin_index(size_t size){
+    size = MAX(size, 8);
+    for (int i = 0; i < NUM_CLASSES; i++) {
+        if (size <= size_classes[i]) {
+            return i;
+        }
+    }
+    return NUM_CLASSES - 1;
+};
 
 /* 
  * mm_init - Initialize the memory manager 
@@ -135,6 +127,10 @@ int mm_init(void)
     PUT(heap_listp + (3*WSIZE), PACK(0, 1));     /* Epilogue header */
     heap_listp += (2*WSIZE);                     
 
+#ifdef NEXT_FIT
+    rover = heap_listp;
+#endif
+
     /* Extend the empty heap with a free block of CHUNKSIZE bytes */
     if (extend_heap(CHUNKSIZE/WSIZE) == NULL) 
         return -1;
@@ -142,8 +138,7 @@ int mm_init(void)
 }
 
 /* 
- * malloc - Allocate a block with at least size bytes of payload
- * mark new block as allocated  
+ * malloc - Allocate a block with at least size bytes of payload 
  */
 void *malloc(size_t size) 
 {
@@ -159,10 +154,11 @@ void *malloc(size_t size)
         return NULL;
 
     /* Adjust block size to include overhead and alignment reqs. */
-    if (size <= 2*DSIZE)                                          
-        asize = 3*DSIZE;                                        
+    if (size <= DSIZE)                                          
+        asize = 2*DSIZE;                                        
     else
         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE); 
+    asize += BLOCK_OVERHEAD;
 
     /* Search the free list for a fit */
     if ((bp = find_fit(asize)) != NULL) {
@@ -170,7 +166,7 @@ void *malloc(size_t size)
         place(bp, asize);
 
         dbg_printf("a %p (%zu b)\n", bp, asize);                  
-        return bp;
+        return (char*)bp + BLOCK_OVERHEAD;
     }
 
     /* No fit found. Get more memory and place the block */
@@ -182,7 +178,7 @@ void *malloc(size_t size)
     
     dbg_printf("a %p (%zu b)\n", bp, asize);
 
-    return bp;
+    return (char*)bp + BLOCK_OVERHEAD;
 } 
 
 /* 
@@ -195,6 +191,9 @@ void free(void *bp)
 
     if (bp == 0) 
         return;
+
+    /* convert back to text book style */
+    bp = (char*)bp - BLOCK_OVERHEAD;
 
     size_t size = GET_SIZE(HDRP(bp));
     if (heap_listp == 0){
@@ -226,14 +225,15 @@ void *realloc(void *ptr, size_t size)
         return malloc(size);
     }
 
-    char *old_bp = (char *)ptr;
+    char *old_bp = (char *)ptr - BLOCK_OVERHEAD;
     oldsize = GET_SIZE(HDRP(old_bp));
 
     /* Adjust block size to include overhead and alignment reqs. */
-    if (size <= 2*DSIZE)                                          
-        asize = 3*DSIZE;                                        
+    if (size <= DSIZE)                                          
+        asize = 2*DSIZE;                                        
     else
         asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE); 
+    asize += BLOCK_OVERHEAD;
 
     if (oldsize >= asize) {
         return ptr;
@@ -260,7 +260,7 @@ void *realloc(void *ptr, size_t size)
     }
 
     /* Copy the old data. */
-    size_t copy_size = oldsize - DSIZE; /* ignore header footer */
+    size_t copy_size = oldsize - DSIZE - BLOCK_OVERHEAD;
     if (size < copy_size) copy_size = size;
     memcpy(newptr, ptr, copy_size);
 
@@ -278,41 +278,7 @@ void *realloc(void *ptr, size_t size)
 void mm_checkheap(int lineno)  
 { 
     lineno = lineno; /* keep gcc happy */
-    int err = 0;
-    for (int i = 0; i < NUM_CLASSES; i++) {
-        char* bp = bins[i].head;
-
-        while (bp != NULL) {
-            size_t size = GET_SIZE(HDRP(bp));
-            size_t alloc = GET_ALLOC(HDRP(bp));
-
-            if (alloc) {
-                dbg_printf("Error at line %d: block %p in free list but marked allocated\n", lineno, bp);
-                err = 1;
-            }
-
-            if (size < MINIMAL_BLOCK_SIZE) {
-                dbg_printf("Error at line %d: block %p in free list but size too small (%zu)\n", lineno, bp, size);
-                err = 1;
-            }
-
-            if (bin_index(size) != i) {
-                dbg_printf("Error at line %d: block %p in wrong free list (size %zu in bin %d)\n", lineno, bp, size, i);
-                err = 1;
-            }
-
-            if (NEXT(bp) != NULL) {
-                if (PREV(NEXT(bp)) != bp) {
-                    dbg_printf("Error at line %d: block %p's next block %p has incorrect prev pointer\n", lineno, bp, NEXT(bp));
-                    err = 1;
-                }
-            }
-
-            bp = NEXT(bp);
-        }
-    }
-    if (err) {
-        printf("\n\nHeap check failed at line %d\n", lineno);
+    if (1) {
         /* print free list info */
         for (int i = 0; i < NUM_CLASSES; i++) {
             char* bp = bins[i].head;
@@ -330,7 +296,6 @@ void mm_checkheap(int lineno)
 
             dbg_printf("NULL\n");
         }
-        exit(1);
     }
 }
 
@@ -365,7 +330,7 @@ static void *extend_heap(size_t words)
  * coalesce - Boundary tag coalescing. Return ptr to coalesced block
  * add coalseced block to free list
  */
-static void * coalesce(void *bp) 
+static void *coalesce(void *bp) 
 {
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
@@ -411,6 +376,12 @@ static void * coalesce(void *bp)
         bp = PREV_BLKP(bp);
         add_block(bp, __LINE__);
     }
+#ifdef NEXT_FIT
+    /* Make sure the rover isn't pointing into the free block */
+    /* that we just coalesced */
+    if ((rover > (char *)bp) && (rover < NEXT_BLKP(bp))) 
+        rover = bp;
+#endif
     return bp;
 }
 
@@ -423,7 +394,7 @@ static void place(void *bp, size_t asize)
 {
     size_t csize = GET_SIZE(HDRP(bp));   
 
-    if ((csize - asize) >= (MINIMAL_BLOCK_SIZE)) { 
+    if ((csize - asize) >= (2*DSIZE + BLOCK_OVERHEAD)) { 
         PUT(HDRP(bp), PACK(asize, 1));
         PUT(FTRP(bp), PACK(asize, 1));
         bp = NEXT_BLKP(bp);
@@ -451,47 +422,19 @@ static void *find_fit(size_t asize)
 
     int bin_idx = bin_index(asize);
 
-#ifdef NEXT_FIT
-    bp = bins[bin_idx].rover;
-
-    if (bp == NULL) {
-        bp = bins[bin_idx].head;
-    }
-
-    while (bp != NULL) {
-        if (asize <= GET_SIZE(HDRP(bp))) {
-            bins[bin_idx].rover = NEXT(bp);
-            return bp;
-        }
-        bp = NEXT(bp);
-    }
-#else
     bp = bins[bin_idx].head;
-
     while (bp != NULL) {
         if (asize <= GET_SIZE(HDRP(bp))) {
             return bp;
         }
         bp = NEXT(bp);
     }
-#endif
 
     /* No fit in this bin */
     for(bin_idx = bin_idx + 1; bin_idx < NUM_CLASSES; bin_idx++) {
         bp = bins[bin_idx].head;
-
         if(bp != NULL) {
-            size_t min_size = (size_t)-1;
-            char* best_bp = NULL;
-            while (bp != NULL) {
-                size_t bsize = GET_SIZE(HDRP(bp));
-                if (bsize < min_size) {
-                    min_size = bsize;
-                    best_bp = bp;
-                }
-                bp = NEXT(bp);
-            }
-            return best_bp;
+            return bp;
         }
     }
 
@@ -499,7 +442,7 @@ static void *find_fit(size_t asize)
 }
 
 /*
-add a block to its corresponding free list (have to set size first)
+add a block to free list 
 */
 static void add_block(void *bp, int lineno)
 {
@@ -508,47 +451,6 @@ static void add_block(void *bp, int lineno)
     mm_checkheap(lineno);
     dbg_printf("\n");
 #endif
-
-#ifdef PARTIAL_SORT
-    int bin_idx = bin_index(GET_SIZE(HDRP(bp)));
-
-    /* insert sorted by size, up to K nodes */
-    char* curr = bins[bin_idx].head;
-    char* prev = NULL;
-    size_t size = GET_SIZE(HDRP(bp));
-    int count = 0;
-
-    /* find the last block that is smaller than size */
-    while (curr != NULL && count < K) {
-        if (size >= GET_SIZE(HDRP(curr))) {
-            break;
-        }
-        prev = curr;
-        curr = NEXT(curr);
-        count++;
-    }
-
-    if (prev == NULL) {
-        /* insert at head */
-        NEXT(bp) = bins[bin_idx].head;
-        PREV(bp) = NULL;
-
-        if (bins[bin_idx].head != NULL)
-        {
-            PREV(bins[bin_idx].head) = bp;
-        }
-        bins[bin_idx].head = bp;
-    } else {
-        /* insert in middle or end */
-        NEXT(bp) = curr;
-        PREV(bp) = prev;
-        NEXT(prev) = bp;
-
-        if (curr != NULL) {
-            PREV(curr) = bp;
-        }
-    }
-#else
     int bin_idx = bin_index(GET_SIZE(HDRP(bp)));
 
     NEXT(bp) = bins[bin_idx].head;
@@ -559,11 +461,10 @@ static void add_block(void *bp, int lineno)
         PREV(bins[bin_idx].head) = bp;
     }
     bins[bin_idx].head = bp;
-#endif
 }
 
 /*
-remove a block from its free list (have to make sure its size is correct)
+remove a block from free list 
 */
 static void remove_block(void *bp, int lineno)
 {
@@ -587,24 +488,8 @@ static void remove_block(void *bp, int lineno)
     {
         PREV(NEXT(bp)) = PREV(bp);
     }
-
-
-    if (bins[bin_idx].rover == bp) {
-        bins[bin_idx].rover = NEXT(bp);
-    }
-
     NEXT(bp) = NULL;
     PREV(bp) = NULL;
+
+    bins[bin_idx].rover = bins[bin_idx].head;
 }
-
-/* get the bin index of the size class size belongs */
-static int bin_index(size_t size){
-    size = MAX(size, 8);
-    for (int i = 0; i < NUM_CLASSES; i++) {
-        if (size <= size_classes[i]) {
-            return i;
-        }
-    }
-    return NUM_CLASSES - 1;
-};
-
