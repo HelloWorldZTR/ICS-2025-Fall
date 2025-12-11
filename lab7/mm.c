@@ -187,11 +187,8 @@ void free(void *bp)
 void *realloc(void *ptr, size_t size)
 {
     size_t oldsize;
-    char* bp;
     void *newptr;
-
-    /* convert back to textbook style */
-    bp = (char*)ptr - BLOCK_OVERHEAD;
+    size_t asize;
 
     /* If size == 0 then this is just free, and we return NULL. */
     if(size == 0) {
@@ -204,6 +201,33 @@ void *realloc(void *ptr, size_t size)
         return malloc(size);
     }
 
+    char *old_bp = (char *)ptr - BLOCK_OVERHEAD;
+    oldsize = GET_SIZE(HDRP(old_bp));
+
+    /* Adjust block size to include overhead and alignment reqs. */
+    if (size <= DSIZE)                                          
+        asize = 2*DSIZE;                                        
+    else
+        asize = DSIZE * ((size + (DSIZE) + (DSIZE-1)) / DSIZE); 
+    asize += BLOCK_OVERHEAD;
+
+    if (oldsize >= asize) {
+        return ptr;
+    }
+
+    /* Try to coalesce with next block if it is free */
+    char *next_bp = NEXT_BLKP(old_bp);
+    size_t next_alloc = GET_ALLOC(HDRP(next_bp));
+    size_t next_size = GET_SIZE(HDRP(next_bp));
+
+    if (!next_alloc && (oldsize + next_size >= asize)) {
+        remove_block(next_bp, __LINE__);
+        size_t new_size = oldsize + next_size;
+        PUT(HDRP(old_bp), PACK(new_size, 1));
+        PUT(FTRP(old_bp), PACK(new_size, 1));
+        return ptr;
+    }
+
     newptr = malloc(size);
 
     /* If realloc() fails the original block is left untouched  */
@@ -212,10 +236,9 @@ void *realloc(void *ptr, size_t size)
     }
 
     /* Copy the old data. */
-    /* note: size comes from bp */
-    oldsize = GET_SIZE(HDRP(bp));
-    if(size < oldsize) oldsize = size;
-    memcpy(newptr, ptr, oldsize);
+    size_t copy_size = oldsize - DSIZE - BLOCK_OVERHEAD;
+    if (size < copy_size) copy_size = size;
+    memcpy(newptr, ptr, copy_size);
 
     /* Free the old block. */
     free(ptr);
@@ -395,9 +418,11 @@ add a block to free list
 */
 static void add_block(void *bp, int lineno)
 {
+#ifdef DEBUG
     dbg_printf("+ Blk %p to free list\n", bp);
     mm_checkheap(lineno);
     dbg_printf("\n");
+#endif
 
     NEXT(bp) = free_list_head;
     PREV(bp) = NULL;
@@ -414,9 +439,11 @@ remove a block from free list
 */
 static void remove_block(void *bp, int lineno)
 {
+#ifdef DEBUG
     dbg_printf("- Blk %p from free list\n", bp);
     mm_checkheap(lineno);
     dbg_printf("\n");
+#endif
 
     if (PREV(bp))
     {
