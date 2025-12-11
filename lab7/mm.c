@@ -12,7 +12,7 @@
 #include "memlib.h"
 
 
-#define DEBUG
+// #define DEBUG
 #ifdef DEBUG
 # define dbg_printf(...) printf(__VA_ARGS__)
 #else
@@ -187,20 +187,24 @@ void free(void *bp)
 void *realloc(void *ptr, size_t size)
 {
     size_t oldsize;
+    char* bp;
     void *newptr;
+
+    /* convert back to textbook style */
+    bp = (char*)ptr - BLOCK_OVERHEAD;
 
     /* If size == 0 then this is just free, and we return NULL. */
     if(size == 0) {
-        mm_free(ptr);
+        free(ptr);
         return 0;
     }
 
     /* If oldptr is NULL, then this is just malloc. */
     if(ptr == NULL) {
-        return mm_malloc(size);
+        return malloc(size);
     }
 
-    newptr = mm_malloc(size);
+    newptr = malloc(size);
 
     /* If realloc() fails the original block is left untouched  */
     if(!newptr) {
@@ -208,12 +212,13 @@ void *realloc(void *ptr, size_t size)
     }
 
     /* Copy the old data. */
-    oldsize = GET_SIZE(HDRP(ptr));
+    /* note: size comes from bp */
+    oldsize = GET_SIZE(HDRP(bp));
     if(size < oldsize) oldsize = size;
     memcpy(newptr, ptr, oldsize);
 
     /* Free the old block. */
-    mm_free(ptr);
+    free(ptr);
 
     return newptr;
 }
@@ -284,11 +289,11 @@ static void *coalesce(void *bp)
     }
 
     else if (prev_alloc && !next_alloc) {      /* Case 2 */
+        remove_block(NEXT_BLKP(bp), __LINE__);
+
         size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
         PUT(HDRP(bp), PACK(size, 0));
         PUT(FTRP(bp), PACK(size,0));
-
-        remove_block(NEXT_BLKP(bp), __LINE__);
 
         add_block(bp, __LINE__);
     }
